@@ -1,0 +1,6 @@
+yt-dlp
+faster-whisper
+imageio-ffmpeg
+pyobjc-framework-Vision; sys_platform == "darwin"
+pyobjc-framework-Quartz; sys_platform == "darwin"
+anthropic

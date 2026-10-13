@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+media/
+data/
+helper/.env
+helper/bin/
+helper/helper.log
+web/.env*
+web/.vercel/
+.vercel/
+web/reels-abc-helper.zip

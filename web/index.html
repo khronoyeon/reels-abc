@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>릴스 A+B=C</title>
+<link rel="icon" href="favicon.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+<meta name="color-scheme" content="light">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">A<em>+</em>B<em>=</em>C</span></div>
+  <nav class="tabs">
+    <button data-tab="work" class="active">만들기</button>
+    <button data-tab="saved">보관함</button>
+    <button data-tab="settings">설정</button>
+  </nav>
+  <button id="helperStatus" class="status" data-tab-link="settings">확인 중…</button>
+</header>
+
+<main>
+  <!-- 만들기: A | B | C -->
+  <section id="tab-work" class="tab active">
+    <div id="setupBanner" class="setup-banner hidden">
+      <div><b>추출기가 꺼져 있어요.</b> 설정 탭의 설치 명령을 한 번 더 실행해 주세요.</div>
+      <button class="primary" data-tab-link="settings">설치 방법 보기</button>
+    </div>
+
+    <div class="workspace">
+      <div class="cols" id="cols"></div>
+
+      <aside class="cpanel" id="cpanel">
+        <div class="c-head">
+          <h2>내 대본</h2>
+          <span id="pickCount" class="count"></span>
+        </div>
+        <div id="cParts" class="c-parts"></div>
+        <textarea id="cText" rows="12" placeholder="문장을 고르면 여기에 대본이 만들어져요. 직접 고쳐도 돼요."></textarea>
+        <button id="recombine" class="link hidden">↺ 고른 문장으로 다시 채우기</button>
+        <input id="cTitle" placeholder="제목 (보관할 때 쓰여요)">
+        <div class="row actions">
+          <button id="copyC" class="big">복사</button>
+          <button id="saveC" class="big primary">보관함에 저장</button>
+        </div>
+        <details class="ai" id="aiBox">
+          <summary>✨ AI로 내 주제에 맞게 다시 쓰기</summary>
+          <div class="ai-body">
+            <input id="topicInput" placeholder="내 주제 (예: 30대 직장인 재테크 첫걸음)">
+            <input id="toneInput" placeholder="말투 (선택, 예: 친근한 반말)">
+            <button id="aiComposeBtn" class="primary">AI로 다시 쓰기</button>
+            <small id="aiNote" class="muted"></small>
+          </div>
+        </details>
+        <button id="clearPicks" class="link danger hidden">고른 문장 모두 지우기</button>
+      </aside>
+    </div>
+    <button id="toC" class="to-c hidden">내 대본 보기</button>
+  </section>
+
+  <!-- 보관함 -->
+  <section id="tab-saved" class="tab">
+    <div id="savedList" class="saved-list"></div>
+  </section>
+
+  <!-- 설정 -->
+  <section id="tab-settings" class="tab">
+    <div class="settings-wrap">
+      <div class="card settings open-card">
+        <h3>이미 설치했어요</h3>
+        <p class="small">설치한 <b>"릴스 A+B=C"</b> 프로그램을 실행하세요.</p>
+        <p class="muted small">Mac: 응용 프로그램 폴더 · Dock · 바탕화면 아이콘<br>Windows: 시작 메뉴 · 바탕화면 아이콘</p>
+        <a class="btn big open-local" href="http://127.0.0.1:8765">브라우저에서 열기</a>
+      </div>
+      <div class="card settings setup" id="setupCard">
+        <h3>프로그램 설치 <small class="muted">처음 한 번, 5~10분</small></h3>
+        <p class="muted small">"릴스 A+B=C" 프로그램이 설치돼요. 릴스는 내 컴퓨터 안에서만 글자로 바뀌어요.</p>
+        <div class="os-tabs">
+          <button data-os="mac" class="active">Mac</button>
+          <button data-os="win">Windows</button>
+        </div>
+        <ol class="easy">
+          <li>
+            <span class="num">1</span>
+            <div><b>복사 버튼 누르기</b>
+              <div class="cmd"><code id="installCmd"></code><button id="copyCmd" class="primary">복사</button></div>
+            </div>
+          </li>
+          <li><span class="num">2</span><div id="stepOpen"></div></li>
+          <li><span class="num">3</span><div id="stepPaste"></div></li>
+        </ol>
+        <div id="setupStatus" class="setup-status">설치가 끝나면 여기가 초록색으로 바뀌어요</div>
+        <p class="muted small">한 번 설치하면 컴퓨터를 켤 때마다 저절로 켜져요. 다시 할 일은 없어요.</p>
+        <details class="adv">
+          <summary>지우고 싶을 때</summary>
+          <p class="small muted" id="uninstallHelp"></p>
+          <div class="cmd"><code id="uninstallCmd"></code><button id="copyUninstall">복사</button></div>
+        </details>
+      </div>
+
+      <div class="card settings">
+        <h3>추출 설정</h3>
+        <label class="lbl">정확도</label>
+        <select id="setModel">
+          <option value="auto">자동 — 이 컴퓨터에 맞게 (추천)</option>
+          <option value="large-v3">최고 정확도 (느림)</option>
+          <option value="large-v3-turbo">빠르게</option>
+        </select>
+        <label class="lbl">언어</label>
+        <select id="setLang">
+          <option value="ko">한국어 우선 (추천)</option>
+          <option value="auto">자동 감지</option>
+          <option value="en">영어</option>
+          <option value="ja">일본어</option>
+        </select>
+        <label class="lbl">인스타가 막을 때: 로그인된 브라우저</label>
+        <select id="setCookies">
+          <option value="">사용 안 함</option>
+          <option value="chrome">Chrome</option>
+          <option value="safari">Safari</option>
+          <option value="whale">Whale</option>
+          <option value="edge">Edge</option>
+          <option value="firefox">Firefox</option>
+        </select>
+        <details class="adv">
+          <summary>고급</summary>
+          <label class="lbl">추출기 주소</label>
+          <input id="setHelper" value="http://127.0.0.1:8765">
+        </details>
+        <button id="saveSettings" class="primary">저장</button>
+      </div>
+
+      <div class="card settings">
+        <h3>백업</h3>
+        <p class="muted small">레퍼런스와 대본은 이 브라우저에만 저장돼요. 다른 컴퓨터로 옮길 땐 내보내기 → 가져오기.</p>
+        <div class="row">
+          <button id="exportBtn">내보내기</button>
+          <label class="btn">가져오기<input id="importFile" type="file" accept="application/json" hidden></label>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="player" class="player hidden">
+  <div class="player-head">
+    <div class="player-meta"><b id="playerTitle"></b><span id="playerText"></span></div>
+    <button id="playerClose" class="more" aria-label="닫기">✕</button>
+  </div>
+  <div class="player-body">
+    <video id="playerVideo" controls playsinline preload="metadata"></video>
+    <div class="player-loading"><span class="spin"></span>원본 영상 받는 중… (처음 한 번만)</div>
+  </div>
+</div>
+<div id="menu" class="menu hidden" role="menu"></div>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,837 @@
+#!/usr/bin/env python3
+"""릴스 A+B=C 로컬 헬퍼.
+
+각자의 컴퓨터에서 실행되며, 배포된 웹사이트가 http://127.0.0.1:8765 로 요청을 보낸다.
+- 릴스/쇼츠/틱톡 링크 → yt-dlp로 오디오 추출 → 로컬 whisper로 전사
+- (선택) ANTHROPIC_API_KEY가 있으면 후킹/본문/CTA 자동 분리와 C 생성에 Claude 사용
+- 같은 주소에서 웹 UI(../web)도 서빙하므로 배포 없이 로컬만으로도 사용 가능
+"""
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+
+HERE = Path(__file__).resolve().parent
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Windows: 검은 창 안 띄움
+# Windows: 하위 프로그램(yt-dlp)이 한글을 cp949가 아닌 UTF-8로 내보내도록
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("PYTHONUTF8", "1")
+
+# 창 없이(자동 실행·pythonw) 돌 때는 출력할 곳이 없으므로 로그 파일로
+if sys.stdout is None or sys.stderr is None:
+    _log = open(Path(__file__).resolve().parent / "helper.log", "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stdout or _log
+    sys.stderr = sys.stderr or _log
+
+
+def ensure_ffmpeg():
+    """ffmpeg가 없으면 pip 패키지(imageio-ffmpeg)에 들어 있는 실행 파일을 PATH에 연결."""
+    if shutil.which("ffmpeg"):
+        return
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        return
+    src = Path(imageio_ffmpeg.get_ffmpeg_exe())
+    bindir = HERE / "bin"
+    bindir.mkdir(exist_ok=True)
+    dst = bindir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    if not dst.exists():
+        try:
+            dst.symlink_to(src)
+        except OSError:
+            shutil.copy2(src, dst)
+    os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
+
+
+ensure_ffmpeg()
+WEB_DIR = HERE.parent / "web"
+CONFIG_PATH = HERE / "config.json"
+
+DEFAULT_CONFIG = {
+    "port": 8765,
+    # 배포한 사이트 주소를 여기에 추가 (예: "https://reels-abc.vercel.app")
+    "allowed_origins": ["http://127.0.0.1:8765", "http://localhost:8765", "https://reels-abc.vercel.app"],
+    # 정확도 우선: large-v3 / 속도 우선: large-v3-turbo
+    "model": "auto",
+    "language": "ko",
+    # 인스타가 로그인을 요구할 때 쿠키를 가져올 브라우저 (chrome, safari, firefox, edge, whale 등). 비우면 사용 안 함
+    "cookies_from_browser": "",
+}
+
+MLX_MODELS = {
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
+
+CLAUDE_MODEL = "claude-opus-5-5"
+
+
+def load_env():
+    """helper/.env 의 KEY=VALUE 를 환경변수로 (ANTHROPIC_API_KEY 등)."""
+    env_path = HERE / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            v = v.strip().strip('"').strip("'")
+            if v:
+                os.environ.setdefault(k.strip(), v)
+
+
+load_env()
+
+
+def load_config():
+    cfg = dict(DEFAULT_CONFIG)
+    if CONFIG_PATH.exists():
+        try:
+            cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
+        except Exception as e:  # noqa: BLE001
+            print(f"[경고] config.json 읽기 실패: {e}")
+    env_origins = os.environ.get("ALLOWED_ORIGINS")
+    if env_origins:
+        cfg["allowed_origins"] += [o.strip() for o in env_origins.split(",") if o.strip()]
+    return cfg
+
+
+CONFIG = load_config()
+PROGRESS = {}  # 링크별 현재 단계 (화면에 진행 상황 표시용)
+
+
+# ---------------------------------------------------------------- 전사 엔진
+
+def detect_engine():
+    is_apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
+    if is_apple_silicon:
+        try:
+            import mlx_whisper  # noqa: F401
+            return "mlx-whisper"
+        except ImportError:
+            pass
+    try:
+        import faster_whisper  # noqa: F401
+        return "faster-whisper"
+    except ImportError:
+        pass
+    return None
+
+
+ENGINE = detect_engine()
+_model_lock = threading.Lock()
+_fw_models = {}
+
+# 한국어 숏폼 전사 품질을 올리기 위한 힌트 (문장부호·구어체 유도)
+INITIAL_PROMPT_KO = "안녕하세요. 오늘은 여러분께 꼭 알려드리고 싶은 내용이 있어요. 끝까지 보시고, 저장해 두세요!"
+
+
+def detect_language_mlx(path, repo):
+    import mlx.core as mx
+    from mlx_whisper.audio import N_FRAMES, N_SAMPLES, log_mel_spectrogram, pad_or_trim
+    from mlx_whisper.transcribe import ModelHolder
+
+    model = ModelHolder.get_model(repo, mx.float16)
+    mel = log_mel_spectrogram(str(path), n_mels=model.dims.n_mels, padding=N_SAMPLES)
+    _, probs = model.detect_language(pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16))
+    return probs
+
+
+def resolve_language(language, probs):
+    """'ko' 설정 = 한국어 우선: 감지 결과가 한국어(또는 한국어 확률이 충분)면 ko 고정,
+    아니면 감지된 언어로. 'auto' = 감지 결과 그대로. 그 외 = 강제 지정."""
+    detected = max(probs, key=probs.get) if probs else None
+    if language in ("", None, "auto"):
+        return detected
+    if language == "ko":
+        if detected == "ko" or probs.get("ko", 0) >= 0.25:
+            return "ko"
+        return detected
+    return language
+
+
+def resolve_model(model):
+    if model in ("", None, "auto"):
+        return "large-v3" if ENGINE == "mlx-whisper" else "large-v3-turbo"
+    return model
+
+
+def transcribe_audio(path, model, language):
+    model = resolve_model(model)
+    if ENGINE == "mlx-whisper":
+        import mlx_whisper
+
+        repo = MLX_MODELS.get(model, MLX_MODELS["large-v3"])
+        with _model_lock:
+            lang = language
+            if language in ("", None, "auto", "ko"):
+                try:
+                    lang = resolve_language(language, detect_language_mlx(path, repo))
+                except Exception as e:  # noqa: BLE001
+                    print(f"[경고] 언어 감지 실패, 설정값 사용: {e}")
+                    lang = None if language in ("", "auto") else language
+            prompt = INITIAL_PROMPT_KO if lang == "ko" else None
+            res = mlx_whisper.transcribe(
+                str(path),
+                path_or_hf_repo=repo,
+                language=lang,
+                initial_prompt=prompt,
+                condition_on_previous_text=False,  # 반복·환각 루프 방지
+                hallucination_silence_threshold=2.0,
+                word_timestamps=True,
+                verbose=None,
+            )
+        segs = [
+            {"start": round(s["start"], 2), "end": round(s["end"], 2), "text": s["text"].strip()}
+            for s in res.get("segments", [])
+            if s.get("text", "").strip()
+        ]
+        return segs, res.get("language", lang)
+
+    if ENGINE == "faster-whisper":
+        from faster_whisper import WhisperModel
+
+        with _model_lock:
+            if model not in _fw_models:
+                # 그래픽카드 드라이버 상태와 상관없이 항상 되도록 CPU로 (자동 선택 시 CUDA 라이브러리 없으면 오류)
+                _fw_models[model] = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
+            fw = _fw_models[model]
+            lang = language
+            if language in ("", None, "auto", "ko"):
+                _, probe = fw.transcribe(str(path), language=None, beam_size=1)  # 세그먼트는 지연 생성 → 감지만
+                probs = dict(probe.all_language_probs or []) or {probe.language: probe.language_probability}
+                lang = resolve_language(language, probs)
+            prompt = INITIAL_PROMPT_KO if lang == "ko" else None
+            segments, info = fw.transcribe(
+                str(path),
+                language=lang,
+                initial_prompt=prompt,
+                beam_size=5,
+                vad_filter=True,
+                condition_on_previous_text=False,
+            )
+            segs = [
+                {"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
+                for s in segments
+                if s.text.strip()
+            ]
+        return segs, info.language
+
+    raise RuntimeError("전사 엔진이 없습니다. install 스크립트를 먼저 실행하세요.")
+
+
+# ---------------------------------------------------------------- 다운로드
+
+def yt_dlp_cmd():
+    try:
+        import yt_dlp  # noqa: F401
+        return [sys.executable, "-m", "yt_dlp"]
+    except ImportError:
+        exe = shutil.which("yt-dlp")
+        if exe:
+            return [exe]
+    raise RuntimeError("yt-dlp가 설치되어 있지 않습니다.")
+
+
+def video_stats(info):
+    """조회수·좋아요·댓글 (플랫폼마다 있는 것만)."""
+    return {
+        "views": info.get("view_count") or info.get("play_count"),
+        "likes": info.get("like_count"),
+        "comments": info.get("comment_count"),
+        "uploaded": info.get("upload_date") or "",
+    }
+
+
+_IG_ALPH = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+_ig_cookie_cache = {}
+
+
+def ig_play_count(url, cookies_browser):
+    """인스타는 로그인해야 재생수를 알려줌 → 이 컴퓨터 브라우저의 인스타 로그인으로 조회 (인스타에만 전송)."""
+    m = re.search(r"instagram\.com/(?:[^/]+/)?(?:reels?|p|tv)/([A-Za-z0-9_-]+)", url)
+    if not m:
+        return None
+    import urllib.request
+    from yt_dlp.cookies import extract_cookies_from_browser
+    pk = 0
+    for c in m.group(1)[:11]:
+        pk = pk * 64 + _IG_ALPH.index(c)
+    for browser in [b for b in [cookies_browser, "chrome"] if b]:
+        try:
+            if browser not in _ig_cookie_cache:
+                jar = extract_cookies_from_browser(browser)
+                _ig_cookie_cache[browser] = "; ".join(f"{c.name}={c.value}" for c in jar if "instagram.com" in c.domain)
+            ck = _ig_cookie_cache[browser]
+            if "sessionid=" not in ck:
+                continue
+            req = urllib.request.Request(f"https://i.instagram.com/api/v1/media/{pk}/info/", headers={
+                "Cookie": ck, "X-IG-App-ID": "936619743392459",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+            })
+            for attempt in range(2):
+                try:
+                    item = json.load(urllib.request.urlopen(req, timeout=20))["items"][0]
+                    return item.get("play_count") or item.get("ig_play_count") or item.get("view_count")
+                except Exception:  # noqa: BLE001
+                    if attempt:
+                        raise
+                    import time
+                    time.sleep(1.5)
+        except Exception as e:  # noqa: BLE001
+            print(f"[정보] 인스타 조회수 가져오기 실패({browser}): {e}")
+    return None
+
+
+def stats_with_views(info, url, cookies_browser):
+    st = video_stats(info)
+    if st["views"] is None and "instagram.com" in url:
+        st["views"] = ig_play_count(url, cookies_browser)
+    return st
+
+
+def fetch_meta(url, cookies_browser):
+    cmd = yt_dlp_cmd() + ["--no-playlist", "--no-warnings", "--skip-download", "-j"]
+    if cookies_browser:
+        cmd += ["--cookies-from-browser", cookies_browser]
+    p = subprocess.run(cmd + [url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, creationflags=NO_WINDOW)
+    if p.returncode != 0:
+        raise RuntimeError("영상 정보를 가져오지 못했어요.\n" + (p.stderr or "")[-400:])
+    info = json.loads(p.stdout.strip().splitlines()[-1])
+    return {"stats": stats_with_views(info, url, cookies_browser), "duration": info.get("duration")}
+
+
+# 레퍼런스·대본 데이터: 브라우저가 아니라 이 컴퓨터 파일에 저장 (프로그램/브라우저 어디서 열어도 같은 데이터)
+DATA_DIR = HERE.parent / "data"
+STATE_FILE = DATA_DIR / "state.json"
+_state_lock = threading.Lock()
+
+
+def read_state():
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def write_state(data):
+    DATA_DIR.mkdir(exist_ok=True)
+    with _state_lock:
+        tmp = STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        if STATE_FILE.exists():  # 바로 전 버전 하나는 백업으로 남김
+            shutil.copy2(STATE_FILE, DATA_DIR / "state.backup.json")
+        os.replace(tmp, STATE_FILE)
+
+
+def export_state():
+    import datetime
+    downloads = Path.home() / "Downloads"
+    downloads.mkdir(exist_ok=True)
+    dst = downloads / f"reels-abc-{datetime.date.today().isoformat()}.json"
+    dst.write_text(json.dumps(read_state(), ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(dst)
+
+
+# 원본 영상(구간 재생용): 처음 재생할 때 한 번만 받아서 보관
+MEDIA_DIR = HERE.parent / "media"
+_video_lock = threading.Lock()
+
+
+def ensure_video(url, cookies_browser):
+    """원본 영상을 받아 media/ 에 보관. (경로, 영상 정보) 반환. 이미 있으면 다시 받지 않음."""
+    import hashlib
+    MEDIA_DIR.mkdir(exist_ok=True)
+    url = url.split("?")[0] if "instagram.com" in url else url
+    name = hashlib.sha1(url.encode()).hexdigest()[:16] + ".mp4"
+    dst = MEDIA_DIR / name
+    info_path = MEDIA_DIR / (name[:-4] + ".info.json")
+    with _video_lock:
+        if not dst.exists():
+            cmd = yt_dlp_cmd() + [
+                "--no-playlist", "--no-warnings", "--write-info-json",
+                "-f", "b[ext=mp4][height<=1080]/bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=720]+ba/b",
+                "--merge-output-format", "mp4", "-o", str(MEDIA_DIR / (name[:-4] + ".%(ext)s")),
+            ]
+            if cookies_browser:
+                cmd += ["--cookies-from-browser", cookies_browser]
+            p = subprocess.run(cmd + [url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, creationflags=NO_WINDOW)
+            if p.returncode != 0 or not dst.exists():
+                raise RuntimeError("영상을 받지 못했어요." + login_hint(p.stderr or "") + "\n" + (p.stderr or "")[-400:])
+    info = {}
+    if info_path.exists():
+        try:
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            pass
+    return dst, info
+
+
+def login_hint(err):
+    e = err.lower()
+    if "login" in e or "cookie" in e or "rate" in e:
+        return " (인스타 로그인이 필요해요. 설정에서 '로그인된 브라우저'를 골라주세요.)"
+    return ""
+
+
+# 3) 화면 맨 위 타이틀 자막 읽기 (Mac 내장 글자 인식)
+def frame_texts(png):
+    import Quartz
+    import Vision
+    from Foundation import NSURL
+    src = Quartz.CGImageSourceCreateWithURL(NSURL.fileURLWithPath_(str(png)), None)
+    img = Quartz.CGImageSourceCreateImageAtIndex(src, 0, None)
+    req = Vision.VNRecognizeTextRequest.alloc().init()
+    req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+    req.setRecognitionLanguages_(["ko-KR", "en-US"])
+    req.setUsesLanguageCorrection_(True)
+    Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(img, None).performRequests_error_([req], None)
+    out = []
+    for o in req.results() or []:
+        b = o.boundingBox()  # 0~1, 아래쪽이 0
+        out.append((o.topCandidates_(1)[0].string().strip(), b.origin.y + b.size.height, b.size.height))
+    return out
+
+
+def frames_texts(pngs):
+    """여러 장의 글자 인식 결과: {png: [(글자, 위쪽 끝, 높이)]}"""
+    if sys.platform == "darwin":
+        try:
+            import Vision  # noqa: F401
+        except ImportError:
+            return {}
+        return {p: frame_texts(p) for p in pngs}
+    if os.name == "nt":
+        ps = shutil.which("powershell") or "powershell"
+        r = subprocess.run([ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HERE / "ocr_win.ps1"), *map(str, pngs)],
+                           capture_output=True, timeout=120, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = {p: [] for p in pngs}
+        by_name = {str(p): p for p in pngs}
+        for line in r.stdout.decode("utf-8", "ignore").splitlines():
+            line = line.strip().lstrip("\ufeff")
+            if not line.startswith("{"):
+                continue
+            try:
+                d = json.loads(line)
+                out[by_name[d["file"]]].append((d["text"].strip(), float(d["top"]), float(d["h"])))
+            except Exception:  # noqa: BLE001
+                pass
+        return out
+    return {}
+
+
+def screen_title(video_path):
+    """영상 앞부분 프레임에서 화면 위쪽의 큰 글자 중 계속 떠 있는 줄 = 타이틀 자막."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return ""
+    seen = {}
+    frames = 0
+    with tempfile.TemporaryDirectory(prefix="reels-title-") as tmp:
+        pngs = []
+        for t in (0.3, 1.0, 2.0, 3.0):
+            png = Path(tmp) / f"f{t}.png"
+            subprocess.run([ffmpeg, "-loglevel", "error", "-y", "-ss", str(t), "-i", str(video_path), "-frames:v", "1", str(png)],
+                           capture_output=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if png.exists():
+                pngs.append(png)
+        results = frames_texts(pngs)
+        for png in pngs:
+            if png not in results:
+                continue
+            frames += 1
+            for text, top, h in results[png]:
+                # 화면 위쪽 45% 안의 글자만
+                if top < 0.55 or len(text) < 2:
+                    continue
+                # 프레임마다 "실패확률...." / "실패 확률:" 처럼 다르게 읽혀도 같은 줄로 보도록 글자만 남겨 비교
+                key = re.sub(r"[^0-9A-Za-z가-힣]", "", text)
+                if len(key) < 2:
+                    continue
+                clean = re.sub(r"[^0-9A-Za-z가-힣\s?!%·,&+<>\-]", "", text)
+                clean = re.sub(r"\s+", " ", clean).strip(" .,:·-")
+                e = seen.setdefault(key, {"text": clean, "top": top, "h": h, "n": 0})
+                e["n"] += 1
+                e["h"] = max(e["h"], h)
+                if len(clean) > len(e["text"]):
+                    e["text"] = clean
+    if not seen:
+        return ""
+    # 1) 여러 프레임에 계속 떠 있는 줄만 (화면 속 소품·스쳐가는 글자 제외)
+    need = 2 if frames >= 2 else 1
+    steady = [e for e in seen.values() if e["n"] >= need] or list(seen.values())
+    # 2) 그중 가장 큰 글자의 70% 이상 크기만 = 타이틀 (배경의 작은 글자 제외)
+    max_h = max(e["h"] for e in steady)
+    lines = [e for e in steady if e["h"] >= max(0.03, max_h * 0.7)]
+    return " ".join(e["text"] for e in sorted(lines, key=lambda e: -e["top"]))[:80]
+
+
+def download_audio(url, workdir, cookies_browser):
+    out = str(Path(workdir) / "audio.%(ext)s")
+    base = yt_dlp_cmd() + [
+        "--no-playlist", "--no-warnings", "-f", "bestaudio/best",
+        "-x", "--audio-format", "wav", "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1",
+        "--print-json", "-o", out,
+    ]
+    attempts = [[]]
+    if cookies_browser:
+        attempts = [["--cookies-from-browser", cookies_browser]]
+    last_err = ""
+    for extra in attempts:
+        p = subprocess.run(base + extra + [url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, creationflags=NO_WINDOW)
+        if p.returncode == 0:
+            info = {}
+            for line in p.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("{"):
+                    try:
+                        info = json.loads(line)
+                    except json.JSONDecodeError:
+                        pass
+            wavs = list(Path(workdir).glob("audio*.wav"))
+            if not wavs:
+                raise RuntimeError("오디오 파일을 찾지 못했습니다.")
+            return wavs[0], info
+        last_err = (p.stderr or p.stdout)[-800:]
+    hint = ""
+    if "login" in last_err.lower() or "cookie" in last_err.lower() or "rate" in last_err.lower():
+        hint = " (인스타 로그인이 필요합니다. 설정에서 '쿠키 가져올 브라우저'를 지정하세요.)"
+    raise RuntimeError(f"다운로드 실패{hint}\n{last_err}")
+
+
+# ---------------------------------------------------------------- Claude (선택)
+
+def claude_client():
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        return None
+    return anthropic.Anthropic()
+
+
+def claude_json(prompt, schema):
+    client = claude_client()
+    if client is None:
+        raise RuntimeError("AI 기능을 쓰려면 ANTHROPIC_API_KEY 와 anthropic 패키지가 필요합니다.")
+    params = dict(
+        model=CLAUDE_MODEL,
+        max_tokens=16000,
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+        messages=[{"role": "user", "content": prompt}],
+    )
+    try:
+        # 안전 분류기가 거절하면 서버가 다른 모델로 자동 재시도
+        resp = client.beta.messages.create(
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default", **params
+        )
+    except TypeError:
+        # 구버전 SDK(fallbacks 미지원)
+        resp = client.beta.messages.create(**params)
+    if resp.stop_reason == "refusal":
+        raise RuntimeError("AI가 이 요청을 처리하지 않았습니다.")
+    text = next(b.text for b in resp.content if b.type == "text")
+    return json.loads(text)
+
+
+SPLIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "units": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string", "enum": ["hook", "body", "cta"]},
+                    "section_start": {"type": "boolean"},
+                    "section_title": {"type": "string"},
+                },
+                "required": ["label", "section_start", "section_title"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["units"],
+    "additionalProperties": False,
+}
+
+
+def ai_split(segments):
+    numbered = "\n".join(f"{i}. {s['text']}" for i, s in enumerate(segments))
+    prompt = f"""아래는 인스타그램 릴스 대본을 문장(또는 호흡) 단위로 나눈 것이다. 각 줄을 hook / body / cta 로 분류하고, body는 내용 단위 섹션으로 나눠라.
+
+정의:
+- hook: 스크롤을 멈추게 하는 도입부 (질문, 충격적 사실, 결과 먼저, 공감 유발). 보통 맨 앞 1~3줄.
+- body: 실제 정보·스토리·근거·방법.
+- cta: 행동 유도와, 그 행동을 하게 만드는 '예고/미끼' 문장까지 전부 포함한다.
+  예) 아래 세 줄은 모두 cta 다:
+    이 외에도 S&P500보다 수익 많이 내는 ETF들
+    특징 주의사항 다 정리했으니까
+    댓글에 5 적어줘.
+  즉 "이 외에도 / 나머지는 / 더 자세한 건 / 다 정리했으니까 / 보내줄게" 같은 연결·예고 문장이 마지막 행동 요청(댓글, 팔로우, 저장, 공유, 프로필 링크, DM 등) 앞에 붙어 있으면 그것도 cta 다.
+- 순서는 반드시 hook → body → cta 연속 구간. CTA가 없으면 cta 없이 끝나도 된다.
+
+body 섹션:
+- body 안에서 다루는 항목/단계/포인트가 바뀌는 첫 줄에 section_start=true, section_title에 그 섹션을 3~10자로 요약 (예: "1번 ETF QQQM", "주의사항", "실제 수익 비교").
+- body의 첫 줄은 항상 section_start=true.
+- hook/cta 줄은 section_start=false, section_title="".
+- units 배열 길이는 정확히 {len(segments)}개, 입력 순서 그대로.
+
+대본:
+{numbered}"""
+    data = claude_json(prompt, SPLIT_SCHEMA)
+    units = data["units"][: len(segments)]
+    units += [{"label": "body", "section_start": False, "section_title": ""}] * (len(segments) - len(units))
+    return {"units": units}
+
+
+COMPOSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "hook": {"type": "string"},
+        "body": {"type": "string"},
+        "cta": {"type": "string"},
+        "notes": {"type": "string"},
+    },
+    "required": ["hook", "body", "cta", "notes"],
+    "additionalProperties": False,
+}
+
+
+def ai_compose(parts, topic, tone):
+    blocks = []
+    for p in parts:
+        sub = f" ({p['sectionTitle']})" if p.get("sectionTitle") else ""
+        blocks.append(f"[{p['group']} 레퍼런스 · {p['section'].upper()}{sub} · 출처: {p.get('title') or '제목없음'}]\n{p['text']}")
+    prompt = f"""나는 릴스를 A+B=C 구조로 기획한다. 여러 레퍼런스(A, B, C …)에서 골라낸 후킹/본문/CTA 조각을 재료로, 새로운 릴스 대본 C를 써라.
+
+규칙:
+- 레퍼런스 문장을 그대로 베끼지 말고, 구조·리듬·심리 장치(후킹 방식, 전개 방식, CTA 방식)를 가져와 내 주제에 맞게 새로 쓴다.
+- 재료는 사용자가 문장 단위로 직접 고른 것이다. 고른 순서와 본문 섹션 구성을 최대한 살린다.
+- CTA는 '예고/미끼 문장 + 행동 요청'(예: 이 외에도 ~ 다 정리했으니까 댓글에 5 적어줘) 구조를 유지한다.
+- 선택된 섹션이 없는 부분은 다른 재료의 흐름에 맞춰 자연스럽게 채운다.
+- 말로 읽는 대본이므로 짧은 구어체 문장, 한 줄에 한 호흡.
+- notes에는 어떤 레퍼런스의 어떤 장치를 가져왔는지 2~4줄로 설명.
+
+내 주제: {topic or '(주제 미지정 — 레퍼런스 주제를 조합해 자연스럽게)'}
+톤: {tone or '레퍼런스와 비슷하게'}
+
+재료:
+""" + "\n\n".join(blocks)
+    return claude_json(prompt, COMPOSE_SCHEMA)
+
+
+# ---------------------------------------------------------------- HTTP
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, directory=str(WEB_DIR), **kw)
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-cache")  # 업데이트한 UI가 바로 반영되도록
+        super().end_headers()
+
+    def log_message(self, fmt, *args):
+        origin = self.headers.get("Origin") if hasattr(self, "headers") and self.headers else None
+        ua = (self.headers.get("User-Agent") or "")[-40:] if hasattr(self, "headers") and self.headers else ""
+        extra = f" origin={origin} ua=…{ua}" if origin else ""
+        sys.stderr.write("[helper] " + (fmt % args) + extra + "\n")
+
+    def _origin_ok(self):
+        origin = self.headers.get("Origin")
+        return origin is None or origin in CONFIG["allowed_origins"]
+
+    def _cors(self):
+        origin = self.headers.get("Origin")
+        if origin and origin in CONFIG["allowed_origins"]:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+
+    def _json(self, code, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(204 if self._origin_ok() else 403)
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path.startswith("/api/health"):
+            if not self._origin_ok():
+                return self._json(403, {"error": "허용되지 않은 사이트입니다. helper/config.json 의 allowed_origins 에 추가하세요."})
+            return self._json(200, {
+                "ok": True,
+                "engine": ENGINE,
+                "model": CONFIG["model"],
+                "language": CONFIG["language"],
+                "ai": claude_client() is not None,
+                "cookies_from_browser": CONFIG["cookies_from_browser"],
+            })
+        if self.path.startswith("/api/progress"):
+            from urllib.parse import parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            return self._json(200, {"stage": PROGRESS.get((q.get("url") or [""])[0], "")})
+        if self.path.startswith("/api/state"):
+            if not self._origin_ok():
+                return self._json(403, {"error": "forbidden"})
+            return self._json(200, read_state())
+        if self.path.startswith("/media/"):
+            return self.serve_media()
+        return super().do_GET()
+
+    def serve_media(self):
+        """영상 파일 전송 — 원하는 구간으로 건너뛸 수 있게 Range 요청 지원."""
+        name = urlparse(self.path).path.rsplit("/", 1)[-1]
+        f = MEDIA_DIR / name
+        if not re.fullmatch(r"[0-9a-f]{16}\.mp4", name) or not f.exists():
+            self.send_error(404)
+            return
+        size = f.stat().st_size
+        start, end = 0, size - 1
+        m = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range") or "")
+        if m:
+            if m.group(1):
+                start = int(m.group(1))
+                if m.group(2):
+                    end = min(int(m.group(2)), size - 1)
+            elif m.group(2):
+                start = max(0, size - int(m.group(2)))
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.end_headers()
+        with open(f, "rb") as fh:
+            fh.seek(start)
+            left = end - start + 1
+            try:
+                while left > 0:
+                    chunk = fh.read(min(256 * 1024, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    def do_POST(self):
+        if not self._origin_ok():
+            return self._json(403, {"error": "허용되지 않은 사이트입니다. helper/config.json 의 allowed_origins 에 추가하세요."})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            data = json.loads(self.rfile.read(length) or b"{}")
+            route = urlparse(self.path).path
+            if route == "/api/state":
+                write_state(data)
+                return self._json(200, {"ok": True})
+            if route == "/api/export":
+                return self._json(200, {"path": export_state()})
+            if route == "/api/open":
+                import webbrowser
+                if re.match(r"^https?://", data.get("url", "")):
+                    webbrowser.open(data["url"])
+                return self._json(200, {"ok": True})
+            if route == "/api/transcribe":
+                return self._json(200, self.transcribe(data))
+            cookies = data.get("cookies_from_browser", CONFIG["cookies_from_browser"])
+            if route == "/api/meta":
+                return self._json(200, fetch_meta(data["url"], cookies))
+            if route == "/api/video":
+                return self._json(200, {"src": "/media/" + ensure_video(data["url"], cookies)[0].name})
+            if route == "/api/title":
+                video, _ = ensure_video(data["url"], cookies)
+                return self._json(200, {"screen_title": screen_title(video), "video": "/media/" + video.name})
+            if route == "/api/split":
+                return self._json(200, ai_split(data["segments"]))
+            if route == "/api/compose":
+                return self._json(200, ai_compose(data["parts"], data.get("topic", ""), data.get("tone", "")))
+            return self._json(404, {"error": "not found"})
+        except Exception as e:  # noqa: BLE001
+            return self._json(500, {"error": str(e)})
+
+    def transcribe(self, data):
+        url = (data.get("url") or "").strip()
+        if not re.match(r"^https?://", url):
+            raise RuntimeError("올바른 링크가 아닙니다.")
+        model = data.get("model") or CONFIG["model"]
+        language = data.get("language") or CONFIG["language"]
+        cookies = data.get("cookies_from_browser", CONFIG["cookies_from_browser"])
+        PROGRESS[url] = "download"
+        video, info = ensure_video(url, cookies)
+        PROGRESS[url] = "transcribe"
+        with tempfile.TemporaryDirectory(prefix="reels-abc-") as tmp:
+            wav = Path(tmp) / "audio.wav"
+            subprocess.run([shutil.which("ffmpeg") or "ffmpeg", "-loglevel", "error", "-y", "-i", str(video),
+                            "-vn", "-ar", "16000", "-ac", "1", str(wav)], capture_output=True, timeout=120, creationflags=NO_WINDOW)
+            if not wav.exists():
+                if ENGINE == "faster-whisper":
+                    wav = video  # ffmpeg가 막혀도 영상에서 소리를 바로 읽을 수 있음 (Windows)
+                else:
+                    wav, info = download_audio(url, tmp, cookies)
+            segments, lang = transcribe_audio(wav, model, language)
+        PROGRESS[url] = "title"
+        try:
+            title_text = screen_title(video)
+        except Exception as e:  # noqa: BLE001
+            print(f"[정보] 타이틀 자막 읽기 실패: {e}")
+            title_text = ""
+        return {
+            "url": url,
+            "title": info.get("title") or info.get("description", "")[:60],
+            "uploader": info.get("uploader") or info.get("channel") or "",
+            "duration": info.get("duration"),
+            "thumbnail": info.get("thumbnail"),
+            "caption": info.get("description") or "",
+            "stats": stats_with_views(info, url, cookies),
+            "screen_title": title_text,
+            "video": "/media/" + video.name,
+            "language": lang,
+            "model": model,
+            "segments": segments,
+        }
+
+
+def main():
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:  # noqa: BLE001
+        pass
+    if ENGINE is None:
+        print("[오류] whisper 엔진이 설치되지 않았습니다. 설치 명령을 다시 실행하세요.")
+    port = int(os.environ.get("PORT", CONFIG["port"]))
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    print(f"✅ 릴스 A+B=C 헬퍼 실행 중: http://127.0.0.1:{port}")
+    print(f"   전사 엔진: {ENGINE} / 모델: {CONFIG['model']} / AI: {'켜짐' if claude_client() else '꺼짐'}")
+    print(f"   허용된 사이트: {', '.join(CONFIG['allowed_origins'])}")
+    print("   종료하려면 Ctrl+C")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+yt-dlp
+mlx-whisper
+imageio-ffmpeg
+pyobjc-framework-Vision
+pyobjc-framework-Quartz
+pywebview
+anthropic

@@ -1,0 +1,91 @@
+# 실제 Windows에서 설치 명령 → 추출기 → 받아쓰기 → 타이틀 자막 읽기까지 끝까지 시험
+name: windows-test
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  install-and-run:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 한국어 글자 인식 기능 설치 (한국어 Windows에는 기본 포함)
+        shell: powershell
+        run: |
+          Add-WindowsCapability -Online -Name "Language.OCR~~~ko-KR~0.0.1.0" | Out-Null
+          Get-WindowsCapability -Online -Name "Language.OCR~~~ko-KR*" | Format-Table Name, State
+
+      - name: 설치 파일(zip) 만들고 로컬 서버로 내보내기
+        shell: powershell
+        run: |
+          $stage = "$env:RUNNER_TEMP\site"
+          New-Item -ItemType Directory -Force "$stage\pkg\reels-abc-helper" | Out-Null
+          Copy-Item helper, web -Destination "$stage\pkg\reels-abc-helper" -Recurse
+          Remove-Item "$stage\pkg\reels-abc-helper\helper\.env" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$stage\pkg\reels-abc-helper" -DestinationPath "$stage\reels-abc-helper.zip"
+          Copy-Item web\install.ps1, tests\sample.mp4 -Destination $stage
+          Start-Process python -ArgumentList "`"$PWD\tests\serve.py`"", "`"$stage`"" -WindowStyle Hidden
+          Start-Sleep 3
+          (Invoke-WebRequest http://127.0.0.1:8000/install.ps1 -UseBasicParsing).StatusCode
+
+      - name: 사용자와 같은 방식으로 설치 (Windows PowerShell 5.1)
+        shell: powershell
+        env:
+          REELS_BASE: http://127.0.0.1:8000
+          REELS_NO_OPEN: '1'
+        run: |
+          powershell -ExecutionPolicy Bypass -c "irm http://127.0.0.1:8000/install.ps1 | iex"
+          if ($LASTEXITCODE -ne 0) { throw "설치 실패" }
+
+      - name: 설치 결과 확인 (바로가기 · 자동 실행 · 추출기)
+        shell: powershell
+        run: |
+          $desk = [Environment]::GetFolderPath('Desktop'); $startup = [Environment]::GetFolderPath('Startup'); $progs = [Environment]::GetFolderPath('Programs')
+          foreach ($f in @("$desk\릴스 A+B=C.lnk", "$progs\릴스 A+B=C.lnk", "$startup\ReelsExtractor.lnk")) { if (-not (Test-Path $f)) { throw "없음: $f" } else { "OK $f" } }
+          $sh = New-Object -ComObject WScript.Shell
+          $l = $sh.CreateShortcut("$desk\릴스 A+B=C.lnk"); "바로가기 대상: $($l.TargetPath) $($l.Arguments)"
+          $h = Invoke-RestMethod http://127.0.0.1:8765/api/health; $h | ConvertTo-Json
+          if (-not $h.ok -or $h.engine -ne 'faster-whisper') { throw "추출기 상태 이상" }
+          (Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing).StatusCode
+
+      - name: 받아쓰기 + 타이틀 자막 읽기 (테스트 영상)
+        shell: powershell
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $body = @{ url = 'http://127.0.0.1:8000/sample.mp4'; model = 'auto'; language = 'ko' } | ConvertTo-Json
+          $r = Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900
+          "걸린 시간: $([int]$sw.Elapsed.TotalSeconds)초"
+          "타이틀 자막: $($r.screen_title)"
+          "문장 수: $($r.segments.Count)"
+          $r.segments | ForEach-Object { "  [$($_.start)] $($_.text)" }
+          $all = ($r.segments | ForEach-Object { $_.text }) -join ' '
+          if ($r.segments.Count -lt 2) { throw "받아쓰기 결과가 너무 적음" }
+          if ($all -notmatch '월급' -or $all -notmatch '댓글') { throw "받아쓰기 내용이 이상함" }
+          if ($r.screen_title -notmatch '1억') { Write-Warning "타이틀 자막을 못 읽음: '$($r.screen_title)'" }
+          # 구간 재생용 영상 전송 (건너뛰기 지원)
+          $v = Invoke-WebRequest "http://127.0.0.1:8765$($r.video)" -Headers @{ Range = 'bytes=0-99' } -UseBasicParsing
+          "영상 부분 전송: $($v.StatusCode)"
+          if ($v.StatusCode -ne 206) { throw "영상 구간 전송 실패" }
+
+      - name: 데이터 저장 확인
+        shell: powershell
+        run: |
+          $s = @{ refs = @(@{ id = 'x'; group = 'A'; title = '테스트'; units = @() }); saved = @() } | ConvertTo-Json -Depth 5
+          Invoke-RestMethod http://127.0.0.1:8765/api/state -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($s)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } | Out-Null
+          $back = Invoke-RestMethod http://127.0.0.1:8765/api/state
+          if ($back.refs[0].title -ne '테스트') { throw "저장 실패" } else { "저장 OK" }
+
+      - name: (참고) 실제 인스타 릴스 — 데이터센터라 막힐 수 있음
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $body = @{ url = 'https://www.instagram.com/reel/DeGJIEHOYic/'; model = 'auto' } | ConvertTo-Json
+          $r = Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900
+          "타이틀: $($r.screen_title) / 문장 $($r.segments.Count)개 / 좋아요 $($r.stats.likes)"
+
+      - name: 추출기 로그
+        if: always()
+        shell: powershell
+        run: Get-Content "$env:USERPROFILE\ReelsExtractor\helper\helper.log" -Tail 60 -ErrorAction SilentlyContinue
