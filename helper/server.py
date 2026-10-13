@@ -394,7 +394,7 @@ def frame_texts(png):
     out = []
     for o in req.results() or []:
         b = o.boundingBox()  # 0~1, 아래쪽이 0
-        out.append((o.topCandidates_(1)[0].string().strip(), b.origin.y + b.size.height, b.size.height))
+        out.append((o.topCandidates_(1)[0].string().strip(), b.origin.y + b.size.height, b.size.height, b.origin.x))
     return out
 
 
@@ -432,7 +432,7 @@ def frames_texts(pngs):
                 top, h = float(d["top"]), float(d["h"])
                 if orig in crops:  # 잘라낸 이미지 좌표 → 전체 화면 좌표
                     top, h = 1 - 0.45 * (1 - top), 0.45 * h
-                out[orig].append((d["text"].strip(), top, h))
+                out[orig].append((d["text"].strip(), top, h, float(d.get("left", 0))))
             except Exception:  # noqa: BLE001
                 pass
         return out
@@ -459,7 +459,7 @@ def screen_title(video_path):
             if png not in results:
                 continue
             frames += 1
-            for text, top, h in results[png]:
+            for text, top, h, left in results[png]:
                 # 화면 위쪽 45% 안의 글자만
                 if top < 0.55 or len(text) < 2:
                     continue
@@ -469,7 +469,7 @@ def screen_title(video_path):
                     continue
                 clean = re.sub(r"[^0-9A-Za-z가-힣\s?!%·,&+<>\-]", "", text)
                 clean = re.sub(r"\s+", " ", clean).strip(" .,:·-")
-                e = seen.setdefault(key, {"text": clean, "top": top, "h": h, "n": 0})
+                e = seen.setdefault(key, {"text": clean, "top": top, "h": h, "left": left, "n": 0})
                 e["n"] += 1
                 e["h"] = max(e["h"], h)
                 if len(clean) > len(e["text"]):
@@ -482,7 +482,16 @@ def screen_title(video_path):
     # 2) 그중 가장 큰 글자의 70% 이상 크기만 = 타이틀 (배경의 작은 글자 제외)
     max_h = max(e["h"] for e in steady)
     lines = [e for e in steady if e["h"] >= max(0.03, max_h * 0.7)]
-    return " ".join(e["text"] for e in sorted(lines, key=lambda e: -e["top"]))[:80]
+    # 위 → 아래, 같은 줄(높이가 비슷)은 왼쪽 → 오른쪽 순서로
+    lines.sort(key=lambda e: -e["top"])
+    rows = []
+    for e in lines:
+        if rows and abs(rows[-1][0]["top"] - e["top"]) < 0.6 * max(e["h"], rows[-1][0]["h"]):
+            rows[-1].append(e)
+        else:
+            rows.append([e])
+    ordered = [e for row in rows for e in sorted(row, key=lambda e: e["left"])]
+    return " ".join(e["text"] for e in ordered)[:80]
 
 
 def download_audio(url, workdir, cookies_browser):
@@ -830,6 +839,19 @@ class Handler(SimpleHTTPRequestHandler):
         }
 
 
+def warm_up():
+    """1초짜리 무음으로 한 번 돌려서 모델을 메모리에 올려둠."""
+    try:
+        import wave
+        tmp = Path(tempfile.gettempdir()) / "reels-abc-warmup.wav"
+        with wave.open(str(tmp), "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\x00\x00" * 16000)
+        transcribe_audio(tmp, CONFIG["model"], "ko")
+        print("[정보] 받아쓰기 모델 준비 완료")
+    except Exception as e:  # noqa: BLE001
+        print(f"[정보] 모델 미리 올리기 실패(첫 추출 때 올림): {e}")
+
+
 def main():
     try:
         sys.stdout.reconfigure(line_buffering=True)
@@ -840,6 +862,7 @@ def main():
         print("[오류] whisper 엔진이 설치되지 않았습니다. 설치 명령을 다시 실행하세요.")
     port = int(os.environ.get("PORT", CONFIG["port"]))
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=warm_up, daemon=True).start()
     print(f"✅ 릴스 A+B=C 헬퍼 실행 중: http://127.0.0.1:{port}")
     print(f"   전사 엔진: {ENGINE} / 모델: {CONFIG['model']} / AI: {'켜짐' if claude_client() else '꺼짐'}")
     print(f"   허용된 사이트: {', '.join(CONFIG['allowed_origins'])}")

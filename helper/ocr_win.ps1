@@ -38,7 +38,8 @@ foreach ($p in $Paths) {
       if ($rects.Count -eq 0) { continue }
       $top = ($rects | ForEach-Object { $_.Y } | Measure-Object -Minimum).Minimum
       $bottom = ($rects | ForEach-Object { $_.Y + $_.Height } | Measure-Object -Maximum).Maximum
-      [pscustomobject]@{ file = $p; text = $line.Text; top = 1 - $top / $H; h = ($bottom - $top) / $H } | ConvertTo-Json -Compress
+      $left = ($rects | ForEach-Object { $_.X } | Measure-Object -Minimum).Minimum
+      [pscustomobject]@{ file = $p; text = $line.Text; top = 1 - $top / $H; h = ($bottom - $top) / $H; left = $left / [double]$bitmap.PixelWidth } | ConvertTo-Json -Compress
     }
     $stream.Dispose()
   } catch {
