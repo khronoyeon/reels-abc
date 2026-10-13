@@ -93,6 +93,9 @@ jobs:
           $body = @{ url = 'https://www.instagram.com/reel/DeGJIEHOYic/'; model = 'auto' } | ConvertTo-Json
           $r = Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900
           "타이틀: $($r.screen_title) / 문장 $($r.segments.Count)개 / 좋아요 $($r.stats.likes)"
+          $body = @{ url = 'https://www.instagram.com/reel/DdGPLetuVji/'; model = 'auto' } | ConvertTo-Json
+          $r = Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900
+          "타이틀2: $($r.screen_title) / 문장 $($r.segments.Count)개"
 
       - name: 추출기 로그
         if: always()

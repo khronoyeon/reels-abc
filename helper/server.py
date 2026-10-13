@@ -205,16 +205,12 @@ def transcribe_audio(path, model, language):
                 # 그래픽카드 드라이버 상태와 상관없이 항상 되도록 CPU로 (자동 선택 시 CUDA 라이브러리 없으면 오류)
                 _fw_models[model] = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
             fw = _fw_models[model]
-            lang = language
-            if language in ("", None, "auto", "ko"):
-                _, probe = fw.transcribe(str(path), language=None, beam_size=1)  # 세그먼트는 지연 생성 → 감지만
-                probs = dict(probe.all_language_probs or []) or {probe.language: probe.language_probability}
-                lang = resolve_language(language, probs)
-            prompt = INITIAL_PROMPT_KO if lang == "ko" else None
+            # 언어 감지는 받아쓰기 안에서 한 번에 (따로 감지하면 가장 무거운 단계가 두 번 돌아 느려짐)
+            lang = None if language in ("", None, "auto", "ko") else language
             segments, info = fw.transcribe(
                 str(path),
                 language=lang,
-                initial_prompt=prompt,
+                initial_prompt=INITIAL_PROMPT_KO if lang == "ko" else None,
                 beam_size=5,
                 vad_filter=True,
                 condition_on_previous_text=False,
@@ -411,18 +407,32 @@ def frames_texts(pngs):
             return {}
         return {p: frame_texts(p) for p in pngs}
     if os.name == "nt":
+        ffmpeg = shutil.which("ffmpeg")
+        crops = {}
+        if ffmpeg:  # 위쪽 45%만 잘라 2배 확대한 이미지로 읽음
+            for pth in pngs:
+                c = pth.with_name(pth.stem + "_top.png")
+                subprocess.run([ffmpeg, "-loglevel", "error", "-y", "-i", str(pth), "-vf", "crop=iw:ih*0.45:0:0,scale=iw*2:-1:flags=lanczos", str(c)],
+                               capture_output=True, timeout=60, creationflags=NO_WINDOW)
+                if c.exists():
+                    crops[pth] = c
+        targets = [crops.get(pth, pth) for pth in pngs]
         ps = shutil.which("powershell") or "powershell"
-        r = subprocess.run([ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HERE / "ocr_win.ps1"), *map(str, pngs)],
+        r = subprocess.run([ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HERE / "ocr_win.ps1"), *map(str, targets)],
                            capture_output=True, timeout=120, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         out = {p: [] for p in pngs}
-        by_name = {str(p): p for p in pngs}
+        by_name = {str(crops.get(p, p)): p for p in pngs}
         for line in r.stdout.decode("utf-8", "ignore").splitlines():
             line = line.strip().lstrip("\ufeff")
             if not line.startswith("{"):
                 continue
             try:
                 d = json.loads(line)
-                out[by_name[d["file"]]].append((d["text"].strip(), float(d["top"]), float(d["h"])))
+                orig = by_name[d["file"]]
+                top, h = float(d["top"]), float(d["h"])
+                if orig in crops:  # 잘라낸 이미지 좌표 → 전체 화면 좌표
+                    top, h = 1 - 0.45 * (1 - top), 0.45 * h
+                out[orig].append((d["text"].strip(), top, h))
             except Exception:  # noqa: BLE001
                 pass
         return out
