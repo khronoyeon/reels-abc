@@ -30,7 +30,7 @@ Python·Homebrew·ffmpeg 미리 설치 필요 없음 (uv가 파이썬을, imagei
 
 ```bash
 ./scripts/build-zip.sh          # web/reels-abc-helper.zip 생성
-cd web && npx vercel deploy --prod --yes     # web 폴더만 정적 배포 (https://reels-abc.vercel.app)
+./scripts/deploy.sh             # 설치 파일 만들고 사이트 배포 (https://reels-abc.vercel.app)
 ```
 
 배포 전 `web/.env.local`이 생겨 있으면 지울 것 (vercel link가 만드는 토큰 파일, .vercelignore로도 막아둠).
