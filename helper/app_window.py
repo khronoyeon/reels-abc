@@ -57,9 +57,56 @@ def brand_mac_app():
         pass
 
 
+LOCK_PORT = 8766  # 프로그램 창이 이미 열려 있는지 확인용
+
+
+def already_running():
+    """이미 열려 있으면 그 창을 앞으로 가져오라고 알리고 True."""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", LOCK_PORT), timeout=1) as c:
+            c.sendall(b"show")
+        return True
+    except OSError:
+        return False
+
+
+def listen_for_show():
+    """다른 곳(사이트의 '프로그램 열기')에서 다시 열려고 하면 지금 창을 앞으로."""
+    import socket
+    import threading
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        srv.bind(("127.0.0.1", LOCK_PORT))
+    except OSError:
+        return
+    srv.listen(5)
+
+    def loop():
+        import webview
+        while True:
+            conn, _ = srv.accept()
+            conn.close()
+            try:
+                w = webview.windows[0]
+                w.restore()
+                w.show()
+                from AppKit import NSApplication
+                from PyObjCTools import AppHelper
+                AppHelper.callAfter(lambda: NSApplication.sharedApplication().activateIgnoringOtherApps_(True))
+            except Exception:  # noqa: BLE001
+                pass
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 def main():
     import webview
 
+    if already_running():
+        return
+    listen_for_show()
     brand_mac_app()
     ok = ensure_helper()
     target = URL if ok else "data:text/html;charset=utf-8," + (

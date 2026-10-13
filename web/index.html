@@ -68,10 +68,11 @@
   <section id="tab-settings" class="tab">
     <div class="settings-wrap">
       <div class="card settings open-card">
+        <div id="openStatus" class="open-status hidden"><span class="spin"></span><b>릴스 A+B=C 프로그램을 여는 중…</b></div>
         <h3>이미 설치했어요</h3>
-        <p class="small">설치한 <b>"릴스 A+B=C"</b> 프로그램을 실행하세요.</p>
-        <p class="muted small">Mac: 응용 프로그램 폴더 · Dock · 바탕화면 아이콘<br>Windows: 시작 메뉴 · 바탕화면 아이콘</p>
-        <a class="btn big open-local" href="http://127.0.0.1:8765">브라우저에서 열기</a>
+        <p class="small">아래 버튼을 누르면 설치된 <b>"릴스 A+B=C"</b> 프로그램이 열려요.<br><span class="muted">브라우저가 "열기"를 물어보면 <b>[열기]</b> (항상 허용에 체크하면 다음부터 바로 열려요)</span></p>
+        <a class="btn primary big open-app" href="reelsabc://open">프로그램 열기</a>
+        <p class="muted small">안 열리면 프로그램이 없거나 예전 버전이에요 → 아래에서 설치해 주세요 (예전 데이터는 그대로 남아요)</p>
       </div>
       <div class="card settings setup" id="setupCard">
         <h3>프로그램 설치 <small class="muted">처음 한 번, 5~10분</small></h3>

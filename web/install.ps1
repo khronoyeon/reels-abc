@@ -171,6 +171,16 @@ foreach ($folder in @($desk, $progs)) {
   Rename-Item -LiteralPath $tmpName -NewName '릴스 A+B=C.lnk'
 }
 
+# 사이트에서 "프로그램 열기"를 누르면 이 프로그램이 열리도록 reelsabc:// 링크 등록 (현재 사용자만, 관리자 권한 필요 없음)
+$cls = 'HKCU:\Software\Classes\reelsabc'
+New-Item -Path "$cls\shell\open\command" -Force | Out-Null
+Set-ItemProperty -Path $cls -Name '(default)' -Value 'URL:Reels A+B=C'
+Set-ItemProperty -Path $cls -Name 'URL Protocol' -Value ''
+New-Item -Path "$cls\DefaultIcon" -Force | Out-Null
+Set-ItemProperty -Path "$cls\DefaultIcon" -Name '(default)' -Value "$Dir\helper\assets\icon.ico"
+$openCmd = if ($edge) { "`"$edge`" $appArgs" } else { "explorer.exe $AppUrl" }
+Set-ItemProperty -Path "$cls\shell\open\command" -Name '(default)' -Value $openCmd
+
 Write-Host ''
 Write-Host '==============================================' -ForegroundColor Green
 Write-Host '   설치 끝! 릴스 A+B=C 프로그램이 열려요.' -ForegroundColor Green

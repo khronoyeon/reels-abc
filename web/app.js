@@ -1018,7 +1018,7 @@ const SETUP = {
     open: `<b>키보드에서 <kbd>⊞ Windows</kbd> 키를 누른 채 <kbd>R</kbd></b><br><span class="muted">화면 왼쪽 아래에 작은 "실행" 창이 떠요</span>`,
     paste: `<b><kbd>Ctrl</kbd> + <kbd>V</kbd> 로 붙여넣고 <kbd>Enter</kbd></b><br><span class="muted">파란 창이 열리고 설치가 저절로 진행돼요 (5~15분). 필요한 건 전부 자동으로 깔려요.<br>"확인 창"이 뜨면 [예] · "설치 끝!"이 나오면 프로그램이 열려요</span>`,
     uninstallHelp: "PowerShell에 붙여넣고 Enter 하면 추출기와 자동 실행이 모두 지워져요.",
-    uninstall: `Get-CimInstance Win32_Process -Filter "Name like 'python%'" | ? { $_.CommandLine -like '*ReelsExtractor*' } | % { Stop-Process -Id $_.ProcessId -Force }; Remove-Item "$([Environment]::GetFolderPath('Startup'))\\ReelsExtractor.vbs", "$env:USERPROFILE\\ReelsExtractor", "$([Environment]::GetFolderPath('Desktop'))\\릴스 A+B=C.url", "$([Environment]::GetFolderPath('Desktop'))\\릴스 A+B=C.lnk", "$([Environment]::GetFolderPath('Programs'))\\릴스 A+B=C.lnk" -Recurse -Force -ErrorAction SilentlyContinue`,
+    uninstall: `Get-CimInstance Win32_Process -Filter "Name like 'python%'" | ? { $_.CommandLine -like '*ReelsExtractor*' } | % { Stop-Process -Id $_.ProcessId -Force }; Remove-Item "$([Environment]::GetFolderPath('Startup'))\\ReelsExtractor.vbs", "$env:USERPROFILE\\ReelsExtractor", "$([Environment]::GetFolderPath('Desktop'))\\릴스 A+B=C.url", "$([Environment]::GetFolderPath('Desktop'))\\릴스 A+B=C.lnk", "$([Environment]::GetFolderPath('Programs'))\\릴스 A+B=C.lnk", "HKCU:\\Software\\Classes\\reelsabc" -Recurse -Force -ErrorAction SilentlyContinue`,
   },
 };
 function renderSetup() {
@@ -1046,7 +1046,6 @@ const copyText = (t, btn) => navigator.clipboard.writeText(t).then(() => {
 $("#copyCmd").addEventListener("click", (e) => copyText(SETUP[setupOS].cmd, e.currentTarget));
 $("#copyUninstall").addEventListener("click", (e) => copyText(SETUP[setupOS].uninstall, e.currentTarget));
 function goLocal() {
-  try { localStorage.setItem("reels-abc:installed", "1"); } catch {}
   let hash = "";
   if (state.refs.length || state.saved.length) {
     const payload = encodeURIComponent(JSON.stringify({ groups: state.groups, refs: state.refs, saved: state.saved }));
@@ -1056,12 +1055,7 @@ function goLocal() {
 }
 
 document.addEventListener("click", async (e) => {
-  const open = e.target.closest(".open-local");
-  if (open && !IS_LOCAL) {
-    e.preventDefault();
-    goLocal();
-    return;
-  }
+  if (e.target.closest(".open-app")) { e.preventDefault(); openApp(false); return; }
   const link = e.target.closest("[data-tab-link]");
   if (link) {
     showTab(link.dataset.tabLink);
@@ -1134,11 +1128,28 @@ let isRemote = false;
 if (!IS_LOCAL) {
   isRemote = true;
   document.body.classList.add("remote");
+  // 예전 버전의 "설치했으면 내 컴퓨터 주소로 자동 이동" 표시는 지움 (지운 뒤 없는 곳으로 이동하던 문제)
+  try { localStorage.removeItem("reels-abc:installed"); } catch {}
+  // 설치된 프로그램이 있으면 자동으로 프로그램을 엶 (reelsabc:// 링크).
+  // 프로그램이 없으면(지웠거나 예전 버전) 아무 일도 일어나지 않고 이 설치 안내 페이지에 그대로 남음.
   const params = new URLSearchParams(location.search);
-  if (params.has("installed")) { try { localStorage.setItem("reels-abc:installed", "1"); } catch {} }
-  let installed = false;
-  try { installed = localStorage.getItem("reels-abc:installed") === "1"; } catch {}
-  if (installed && !params.has("stay")) goLocal();
+  if (!params.has("stay")) setTimeout(() => openApp(true), 400);
+}
+function openApp(auto) {
+  const st = $("#openStatus");
+  st.classList.remove("hidden");
+  let left = false;
+  const onBlur = () => { left = true; };
+  window.addEventListener("blur", onBlur, { once: true });
+  try { location.href = "reelsabc://open"; } catch {}
+  setTimeout(() => {
+    window.removeEventListener("blur", onBlur);
+    st.classList.toggle("ok", left);
+    st.innerHTML = left
+      ? "✅ 프로그램을 열었어요. 이 창은 닫아도 돼요."
+      : auto ? "" : "프로그램이 열리지 않았어요. 아래에서 설치해 주세요.";
+    if (!left && auto) st.classList.add("hidden");
+  }, 2500);
 }
 
 importFromHash();

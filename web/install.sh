@@ -99,6 +99,10 @@ if [ -z "$REELS_NO_AUTOSTART" ]; then
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>app.reelsabc.open</string>
+    <key>CFBundleURLSchemes</key><array><string>reelsabc</string></array>
+  </dict></array>
 </dict></plist>
 EOF
   cat > "$APP/Contents/MacOS/launcher" <<EOF

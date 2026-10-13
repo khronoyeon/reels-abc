@@ -49,6 +49,9 @@ jobs:
           $item = $sa.Namespace($desk).ParseName('릴스 A+B=C.lnk'); $link = $item.GetLink
           "바로가기 대상: $($link.Path) $($link.Arguments)"
           if ($link.Path -notmatch 'msedge') { Write-Warning 'Edge 바로가기가 아님' }
+          $cmd = (Get-ItemProperty 'HKCU:\Software\Classes\reelsabc\shell\open\command').'(default)'
+          "reelsabc:// 링크: $cmd"
+          if ($cmd -notmatch 'msedge' -or $cmd -notmatch '--app=') { throw "프로그램 열기 링크 등록 안 됨" }
           $h = Invoke-RestMethod http://127.0.0.1:8765/api/health; $h | ConvertTo-Json
           if (-not $h.ok -or $h.engine -ne 'faster-whisper') { throw "추출기 상태 이상" }
           (Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing).StatusCode
