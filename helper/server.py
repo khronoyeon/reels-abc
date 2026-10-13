@@ -769,6 +769,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, ai_compose(data["parts"], data.get("topic", ""), data.get("tone", "")))
             return self._json(404, {"error": "not found"})
         except Exception as e:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
             return self._json(500, {"error": str(e)})
 
     def transcribe(self, data):

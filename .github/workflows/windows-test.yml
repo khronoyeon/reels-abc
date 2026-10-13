@@ -45,7 +45,10 @@ jobs:
           $desk = [Environment]::GetFolderPath('Desktop'); $startup = [Environment]::GetFolderPath('Startup'); $progs = [Environment]::GetFolderPath('Programs')
           foreach ($f in @("$desk\릴스 A+B=C.lnk", "$progs\릴스 A+B=C.lnk", "$startup\ReelsExtractor.lnk")) { if (-not (Test-Path $f)) { throw "없음: $f" } else { "OK $f" } }
           $sh = New-Object -ComObject WScript.Shell
-          $l = $sh.CreateShortcut("$desk\릴스 A+B=C.lnk"); "바로가기 대상: $($l.TargetPath) $($l.Arguments)"
+          $sa = New-Object -ComObject Shell.Application
+          $item = $sa.Namespace($desk).ParseName('릴스 A+B=C.lnk'); $link = $item.GetLink
+          "바로가기 대상: $($link.Path) $($link.Arguments)"
+          if ($link.Path -notmatch 'msedge') { Write-Warning 'Edge 바로가기가 아님' }
           $h = Invoke-RestMethod http://127.0.0.1:8765/api/health; $h | ConvertTo-Json
           if (-not $h.ok -or $h.engine -ne 'faster-whisper') { throw "추출기 상태 이상" }
           (Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing).StatusCode
@@ -55,7 +58,9 @@ jobs:
         run: |
           $sw = [Diagnostics.Stopwatch]::StartNew()
           $body = @{ url = 'http://127.0.0.1:8000/sample.mp4'; model = 'auto'; language = 'ko' } | ConvertTo-Json
-          $r = Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900
+          try {
+            $r = Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900
+          } catch { "ERROR BODY: $($_.ErrorDetails.Message)"; throw }
           "걸린 시간: $([int]$sw.Elapsed.TotalSeconds)초"
           "타이틀 자막: $($r.screen_title)"
           "문장 수: $($r.segments.Count)"
