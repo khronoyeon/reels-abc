@@ -266,7 +266,7 @@ async function backfillStats() {
       ref.stats = r.stats;
     } catch {}
     try {
-      const t = await api("/api/title", { url: ref.url, cookies_from_browser: state.settings.cookies });
+      const t = await api("/api/title", { url: ref.url, cookies_from_browser: state.settings.cookies, transcript: ref.units.map((u) => u.text).join(" ") });
       if (t.screen_title) ref.title = t.screen_title;
       ref.video = t.video;
     } catch {}

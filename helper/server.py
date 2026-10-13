@@ -379,8 +379,14 @@ def login_hint(err):
     return ""
 
 
-# 3) 화면 맨 위 타이틀 자막 읽기 (Mac 내장 글자 인식)
+# 3) 화면 맨 위 타이틀 자막 읽기
+#    Mac: Apple Vision / Windows: 한국어 전용 모델(RapidOCR PP-OCRv5) → 안 되면 Windows 내장 OCR
+#    + 받아쓴 대본과 대조해서 잘못 읽은 글자 보정
+TOP_CROP = 0.45  # 화면 위쪽 45%만 읽음
+
+
 def frame_texts(png):
+    """Mac Vision: [(글자, 위쪽 끝(0~1, 아래가 0), 높이, 왼쪽, 확신도)]"""
     import Quartz
     import Vision
     from Foundation import NSURL
@@ -393,53 +399,192 @@ def frame_texts(png):
     Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(img, None).performRequests_error_([req], None)
     out = []
     for o in req.results() or []:
-        b = o.boundingBox()  # 0~1, 아래쪽이 0
-        out.append((o.topCandidates_(1)[0].string().strip(), b.origin.y + b.size.height, b.size.height, b.origin.x))
+        b = o.boundingBox()
+        c = o.topCandidates_(1)[0]
+        out.append((c.string().strip(), b.origin.y + b.size.height, b.size.height, b.origin.x, float(c.confidence())))
+    return out
+
+
+_rapid = None
+
+
+def rapid_engine():
+    global _rapid
+    if _rapid is None:
+        from rapidocr import LangRec, ModelType, OCRVersion, RapidOCR
+        _rapid = RapidOCR(params={
+            "Rec.lang_type": LangRec.KOREAN, "Rec.ocr_version": OCRVersion.PPOCRV5, "Rec.model_type": ModelType.MOBILE,
+        })
+    return _rapid
+
+
+def rapid_texts(crop_png):
+    """한국어 전용 모델로 (위쪽만 잘라낸) 이미지 읽기 → 전체 화면 좌표로 변환."""
+    r = rapid_engine()(str(crop_png))
+    if r.boxes is None or r.txts is None:
+        return []
+    import cv2
+    hc, wc = cv2.imread(str(crop_png)).shape[:2]
+    out = []
+    for box, text, score in zip(r.boxes, r.txts, r.scores):
+        ys = [float(pt[1]) for pt in box]
+        xs = [float(pt[0]) for pt in box]
+        top = 1 - TOP_CROP * (min(ys) / hc)
+        h = TOP_CROP * (max(ys) - min(ys)) / hc
+        out.append((str(text).strip(), top, h, min(xs) / wc, float(score)))
+    return out
+
+
+def crop_top(ffmpeg, png, scale=1):
+    c = png.with_name(png.stem + f"_top{scale}.png")
+    vf = f"crop=iw:ih*{TOP_CROP}:0:0" + (f",scale=iw*{scale}:-1:flags=lanczos" if scale != 1 else "")
+    subprocess.run([ffmpeg, "-loglevel", "error", "-y", "-i", str(png), "-vf", vf, str(c)],
+                   capture_output=True, timeout=60, creationflags=NO_WINDOW)
+    return c if c.exists() else None
+
+
+def win_builtin_texts(pngs, ffmpeg):
+    """Windows 내장 OCR (한국어 모델을 못 쓸 때). 위쪽만 잘라 2배로 키워서 읽음."""
+    crops = {p: crop_top(ffmpeg, p, 2) for p in pngs} if ffmpeg else {}
+    targets = [crops.get(p) or p for p in pngs]
+    ps = shutil.which("powershell") or "powershell"
+    r = subprocess.run([ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HERE / "ocr_win.ps1"), *map(str, targets)],
+                       capture_output=True, timeout=120, creationflags=NO_WINDOW)
+    out = {p: [] for p in pngs}
+    by_name = {str(crops.get(p) or p): p for p in pngs}
+    for line in r.stdout.decode("utf-8", "ignore").splitlines():
+        line = line.strip().lstrip("﻿")
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+            orig = by_name[d["file"]]
+            top, h = float(d["top"]), float(d["h"])
+            if crops.get(orig):
+                top, h = 1 - TOP_CROP * (1 - top), TOP_CROP * h
+            # 내장 OCR은 확신도를 주지 않음 → 보정 대상이 되도록 낮게
+            out[orig].append((d["text"].strip(), top, h, float(d.get("left", 0)), 0.6))
+        except Exception:  # noqa: BLE001
+            pass
     return out
 
 
 def frames_texts(pngs):
-    """여러 장의 글자 인식 결과: {png: [(글자, 위쪽 끝, 높이)]}"""
+    """여러 장의 글자 인식 결과: {png: [(글자, 위쪽 끝, 높이, 왼쪽, 확신도)]}"""
     if sys.platform == "darwin":
         try:
             import Vision  # noqa: F401
+            return {p: frame_texts(p) for p in pngs}
         except ImportError:
-            return {}
-        return {p: frame_texts(p) for p in pngs}
+            pass
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        try:  # 한국어 전용 모델
+            out = {}
+            for p in pngs:
+                c = crop_top(ffmpeg, p)
+                out[p] = rapid_texts(c) if c else []
+            return out
+        except Exception as e:  # noqa: BLE001
+            print(f"[정보] 한국어 글자 인식 모델 사용 실패 → Windows 기본 기능으로: {e}")
     if os.name == "nt":
-        ffmpeg = shutil.which("ffmpeg")
-        crops = {}
-        if ffmpeg:  # 위쪽 45%만 잘라 2배 확대한 이미지로 읽음
-            for pth in pngs:
-                c = pth.with_name(pth.stem + "_top.png")
-                subprocess.run([ffmpeg, "-loglevel", "error", "-y", "-i", str(pth), "-vf", "crop=iw:ih*0.45:0:0,scale=iw*2:-1:flags=lanczos", str(c)],
-                               capture_output=True, timeout=60, creationflags=NO_WINDOW)
-                if c.exists():
-                    crops[pth] = c
-        targets = [crops.get(pth, pth) for pth in pngs]
-        ps = shutil.which("powershell") or "powershell"
-        r = subprocess.run([ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HERE / "ocr_win.ps1"), *map(str, targets)],
-                           capture_output=True, timeout=120, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        out = {p: [] for p in pngs}
-        by_name = {str(crops.get(p, p)): p for p in pngs}
-        for line in r.stdout.decode("utf-8", "ignore").splitlines():
-            line = line.strip().lstrip("\ufeff")
-            if not line.startswith("{"):
-                continue
-            try:
-                d = json.loads(line)
-                orig = by_name[d["file"]]
-                top, h = float(d["top"]), float(d["h"])
-                if orig in crops:  # 잘라낸 이미지 좌표 → 전체 화면 좌표
-                    top, h = 1 - 0.45 * (1 - top), 0.45 * h
-                out[orig].append((d["text"].strip(), top, h, float(d.get("left", 0))))
-            except Exception:  # noqa: BLE001
-                pass
-        return out
+        return win_builtin_texts(pngs, ffmpeg)
     return {}
 
 
-def screen_title(video_path):
+# --- 받아쓴 대본과 대조해서 보정 ---
+def _jamo(s):
+    """한글을 자모로 풀어서 비교 (네프리 ↔ 넷플릭스 처럼 비슷한 글자를 가깝게 봄)."""
+    out = []
+    for ch in s:
+        code = ord(ch) - 0xAC00
+        if 0 <= code < 11172:
+            out += [chr(0x1100 + code // 588), chr(0x1161 + (code % 588) // 28)]
+            if code % 28:
+                out.append(chr(0x11A7 + code % 28))
+        elif ch.strip():
+            out.append(ch.lower())
+    return out
+
+
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def _plain(t):
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", t)
+
+
+def _ratio(a, b):
+    import difflib
+    return difflib.SequenceMatcher(None, _jamo(a), _jamo(b)).ratio()
+
+
+def refine_lines(ordered, transcript):
+    """타이틀 줄들을 대본과 대조해서 다듬음.
+    - 대본과 글자가 똑같으면 대본의 띄어쓰기로
+    - 비슷하면(확신도 낮은 줄) 대본 구절로 교체
+    - 그래도 이상한 줄은 옆 줄을 기준으로 대본 앞뒤 구절에서 찾고, 못 찾으면 버림"""
+    words = [w for w in (transcript or "").split()][:150]
+    wplain = [_plain(w) for w in words]
+
+    def spans(maxlen=8):
+        for i in range(len(words)):
+            for j in range(i, min(i + maxlen, len(words))):
+                yield i, j + 1
+
+    def text_of(i, j):
+        return re.sub(r"[.,!?]+$", "", " ".join(words[i:j]))
+
+    out = []
+    for e in ordered:
+        e = dict(e, match=None)
+        tp = _plain(e["text"])
+        if words and tp:
+            # 1) 글자가 똑같은 구절 → 띄어쓰기만 대본대로
+            for i, j in spans():
+                if "".join(wplain[i:j]) == tp:
+                    e["text"], e["match"], e["conf"] = text_of(i, j), (i, j), 1.0
+                    break
+            # 2) 확신도가 낮으면 가장 비슷한 구절로
+            if e["match"] is None and e["conf"] < 0.9:
+                best, br = None, 0.0
+                for i, j in spans():
+                    cand = "".join(wplain[i:j])
+                    if not (len(tp) - 3 <= len(cand) <= len(tp) + 4):
+                        continue
+                    r = _ratio(tp, cand)
+                    if r > br:
+                        best, br = (i, j), r
+                if best and br >= 0.62:
+                    e["text"], e["match"], e["conf"] = text_of(*best), best, 0.95
+        out.append(e)
+    # 3) 이상한 줄: 바로 아래/위 줄이 대본에서 찾아졌으면 그 앞/뒤 구절에서 찾음
+    for k, e in enumerate(out):
+        if e["match"] is not None or e["conf"] >= 0.8 or not words:
+            continue
+        tp = _plain(e["text"])
+        cands = []
+        if k + 1 < len(out) and out[k + 1]["match"]:
+            s0 = out[k + 1]["match"][0]
+            cands += [(i, s0) for i in range(max(0, s0 - 4), s0)]
+        if k > 0 and out[k - 1]["match"]:
+            e0 = out[k - 1]["match"][1]
+            cands += [(e0, j) for j in range(e0 + 1, min(len(words), e0 + 4) + 1)]
+        best, br = None, 0.0
+        for i, j in cands:
+            r = _ratio(tp, "".join(wplain[i:j]))
+            # 타이틀 윗줄은 보통 말의 첫머리 → 문장 시작에서 시작하는 구절에 가산점
+            if i == 0 or re.search(r"[.?!]$", words[i - 1]):
+                r += 0.1
+            if r > br:
+                best, br = (i, j), r
+        if best and br >= 0.35:
+            e["text"], e["match"], e["conf"] = text_of(*best), best, 0.9
+    # 4) 끝까지 확신이 없는 줄은 버림
+    return [e for e in out if e["conf"] >= 0.75]
+
+
+def screen_title(video_path, transcript=""):
     """영상 앞부분 프레임에서 화면 위쪽의 큰 글자 중 계속 떠 있는 줄 = 타이틀 자막."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -451,38 +596,40 @@ def screen_title(video_path):
         for t in (0.3, 1.0, 2.0, 3.0):
             png = Path(tmp) / f"f{t}.png"
             subprocess.run([ffmpeg, "-loglevel", "error", "-y", "-ss", str(t), "-i", str(video_path), "-frames:v", "1", str(png)],
-                           capture_output=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                           capture_output=True, timeout=60, creationflags=NO_WINDOW)
             if png.exists():
                 pngs.append(png)
         results = frames_texts(pngs)
-        for png in pngs:
-            if png not in results:
+    for png in pngs:
+        if png not in results:
+            continue
+        frames += 1
+        for text, top, h, left, conf in results[png]:
+            if top < 1 - TOP_CROP or len(text) < 2:
                 continue
-            frames += 1
-            for text, top, h, left in results[png]:
-                # 화면 위쪽 45% 안의 글자만
-                if top < 0.55 or len(text) < 2:
-                    continue
-                # 프레임마다 "실패확률...." / "실패 확률:" 처럼 다르게 읽혀도 같은 줄로 보도록 글자만 남겨 비교
-                key = re.sub(r"[^0-9A-Za-z가-힣]", "", text)
-                if len(key) < 2:
-                    continue
-                clean = re.sub(r"[^0-9A-Za-z가-힣\s?!%·,&+<>\-]", "", text)
-                clean = re.sub(r"\s+", " ", clean).strip(" .,:·-")
-                e = seen.setdefault(key, {"text": clean, "top": top, "h": h, "left": left, "n": 0})
-                e["n"] += 1
-                e["h"] = max(e["h"], h)
-                if len(clean) > len(e["text"]):
-                    e["text"] = clean
+            # 프레임마다 "실패확률...." / "실패 확률:" 처럼 다르게 읽혀도 같은 줄로 보도록 글자만 남겨 비교
+            key = re.sub(r"[^0-9A-Za-z가-힣]", "", text)
+            if len(key) < 2:
+                continue
+            clean = re.sub(r"[^0-9A-Za-z가-힣\s?!%·,&+<>\-]", "", text)
+            clean = re.sub(r"\s+", " ", clean).strip(" .,:·-")
+            e = seen.setdefault(key, {"text": clean, "top": top, "h": h, "left": left, "conf": conf, "n": 0})
+            e["n"] += 1
+            e["h"] = max(e["h"], h)
+            if conf > e["conf"]:
+                e["text"], e["conf"] = clean, conf
     if not seen:
         return ""
     # 1) 여러 프레임에 계속 떠 있는 줄만 (화면 속 소품·스쳐가는 글자 제외)
     need = 2 if frames >= 2 else 1
     steady = [e for e in seen.values() if e["n"] >= need] or list(seen.values())
-    # 2) 그중 가장 큰 글자의 70% 이상 크기만 = 타이틀 (배경의 작은 글자 제외)
+    # 2) 한국어 타이틀이면 배경의 영문 간판·책 제목 같은 글자는 제외
+    if any(_HANGUL.search(e["text"]) for e in steady):
+        steady = [e for e in steady if _HANGUL.search(e["text"])]
+    # 3) 그중 가장 큰 글자의 70% 이상 크기만 = 타이틀
     max_h = max(e["h"] for e in steady)
     lines = [e for e in steady if e["h"] >= max(0.03, max_h * 0.7)]
-    # 위 → 아래, 같은 줄(높이가 비슷)은 왼쪽 → 오른쪽 순서로
+    # 4) 위 → 아래, 같은 줄(높이가 비슷)은 왼쪽 → 오른쪽 순서로
     lines.sort(key=lambda e: -e["top"])
     rows = []
     for e in lines:
@@ -491,8 +638,9 @@ def screen_title(video_path):
         else:
             rows.append([e])
     ordered = [e for row in rows for e in sorted(row, key=lambda e: e["left"])]
+    # 5) 받아쓴 대본과 대조해서 잘못 읽은 글자 보정
+    ordered = refine_lines(ordered, transcript)
     return " ".join(e["text"] for e in ordered)[:80]
-
 
 def download_audio(url, workdir, cookies_browser):
     out = str(Path(workdir) / "audio.%(ext)s")
@@ -781,7 +929,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, {"src": "/media/" + ensure_video(data["url"], cookies)[0].name})
             if route == "/api/title":
                 video, _ = ensure_video(data["url"], cookies)
-                return self._json(200, {"screen_title": screen_title(video), "video": "/media/" + video.name})
+                return self._json(200, {"screen_title": screen_title(video, data.get("transcript", "")), "video": "/media/" + video.name})
             if route == "/api/split":
                 return self._json(200, ai_split(data["segments"]))
             if route == "/api/compose":
@@ -818,7 +966,7 @@ class Handler(SimpleHTTPRequestHandler):
         t2 = time.time()
         PROGRESS[url] = "title"
         try:
-            title_text = screen_title(video)
+            title_text = screen_title(video, " ".join(seg["text"] for seg in segments))
         except Exception as e:  # noqa: BLE001
             print(f"[정보] 타이틀 자막 읽기 실패: {e}")
             title_text = ""

@@ -67,6 +67,18 @@ if (-not $Py) {
 }
 Ok $Py
 
+# Visual C++ 런타임: 받아쓰기 엔진과 한국어 글자 인식 모델이 필요로 함 (Microsoft 공식, 대부분 PC엔 이미 있음)
+$vc = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
+if (-not $vc -or $vc.Installed -ne 1) {
+  Say '[1/6] Visual C++ 런타임 설치 중 (Microsoft 공식, 승인 창이 뜨면 [예]를 눌러주세요)'
+  $vcExe = Join-Path $env:TEMP 'vc_redist.x64.exe'
+  try {
+    Invoke-WebRequest 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $vcExe -UseBasicParsing
+    Start-Process $vcExe -ArgumentList '/install', '/quiet', '/norestart' -Verb RunAs -Wait
+  } catch { Ok "Visual C++ 런타임 설치를 건너뜀: $($_.Exception.Message)" }
+  Remove-Item $vcExe -ErrorAction SilentlyContinue
+}
+
 # ---------------------------------------------------------------- 2) 프로그램 파일 받기
 Say '[2/6] 프로그램 받는 중'
 # 실행 중인 추출기 정리 (파일 덮어쓰기 위해)
@@ -108,6 +120,10 @@ if ($LASTEXITCODE -ne 0) { Fail '설치한 프로그램을 불러오지 못했�
 Say '[4/6] 받아쓰기 모델 받는 중 (약 1.6GB, 인터넷 속도에 따라 몇 분)'
 & $VPy -c "from faster_whisper import WhisperModel as W; W('large-v3-turbo', device='cpu', compute_type='int8')"
 if ($LASTEXITCODE -ne 0) { Fail '받아쓰기 모델을 받지 못했어요. 인터넷 연결을 확인하고 다시 실행해 주세요.' }
+
+Ok '타이틀 자막용 한국어 글자 인식 모델 받는 중'
+& $VPy -c "import sys; sys.path.insert(0, r'$Dir\helper'); import server; server.rapid_engine(); print('ok')" | Out-Null
+if ($LASTEXITCODE -ne 0) { Ok '한국어 글자 인식 모델을 못 받았어요. Windows 기본 글자 인식으로 대신해요.' }
 
 # ---------------------------------------------------------------- 5) 자동 실행 + 지금 실행
 Say '[5/6] 컴퓨터 켤 때 자동 실행 설정'

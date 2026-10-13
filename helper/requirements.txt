@@ -5,4 +5,7 @@ av<16
 imageio-ffmpeg
 pyobjc-framework-Vision; sys_platform == "darwin"
 pyobjc-framework-Quartz; sys_platform == "darwin"
+# Windows 타이틀 자막: 한국어 전용 글자 인식 모델
+rapidocr; sys_platform == "win32"
+onnxruntime; sys_platform == "win32"
 anthropic
