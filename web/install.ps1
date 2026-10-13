@@ -119,7 +119,7 @@ $lnk.TargetPath = $VPyw
 $lnk.Arguments = "`"$Dir\helper\server.py`""
 $lnk.WorkingDirectory = "$Dir\helper"
 $lnk.WindowStyle = 7
-$lnk.Description = '릴스 A+B=C 추출기'
+$lnk.Description = 'Reels A+B=C extractor'
 $lnk.Save()
 Start-Process -FilePath $VPyw -ArgumentList "`"$Dir\helper\server.py`"" -WorkingDirectory "$Dir\helper"
 
@@ -145,11 +145,16 @@ $progs = [Environment]::GetFolderPath('Programs')
 Remove-Item (Join-Path $desk '릴스 A+B=C.url') -ErrorAction SilentlyContinue
 $appArgs = "--app=$AppUrl --window-size=1480,920"
 foreach ($folder in @($desk, $progs)) {
-  $l = $sh.CreateShortcut((Join-Path $folder '릴스 A+B=C.lnk'))
+  # 바로가기 도구는 한글 파일 이름을 못 쓰는 Windows가 있어서 영문으로 만든 뒤 한글 이름으로 바꿈
+  $tmpName = Join-Path $folder 'ReelsABC-tmp.lnk'
+  $final = Join-Path $folder '릴스 A+B=C.lnk'
+  $l = $sh.CreateShortcut($tmpName)
   if ($edge) { $l.TargetPath = $edge; $l.Arguments = $appArgs } else { $l.TargetPath = $AppUrl }
   $l.IconLocation = "$Dir\helper\assets\icon.ico"
-  $l.Description = '릴스 A+B=C'
+  $l.Description = 'Reels A+B=C'
   $l.Save()
+  Remove-Item -LiteralPath $final -ErrorAction SilentlyContinue
+  Rename-Item -LiteralPath $tmpName -NewName '릴스 A+B=C.lnk'
 }
 
 Write-Host ''
