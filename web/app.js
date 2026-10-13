@@ -1015,8 +1015,8 @@ const SETUP = {
   },
   win: {
     cmd: `powershell -NoExit -ExecutionPolicy Bypass -c "irm ${SITE}/install.ps1 | iex"`,
-    open: `<b>키보드에서 <kbd>Windows</kbd> + <kbd>R</kbd></b><br><span class="muted">왼쪽 아래 "실행" 창이 떠요</span>`,
-    paste: `<b><kbd>Ctrl</kbd> + <kbd>V</kbd> 로 붙여넣고 <kbd>Enter</kbd></b><br><span class="muted">파란 창에서 설치가 진행돼요. "설치 끝!"이 나오면 프로그램이 열려요 (5~15분)</span>`,
+    open: `<b>키보드에서 <kbd>⊞ Windows</kbd> 키를 누른 채 <kbd>R</kbd></b><br><span class="muted">화면 왼쪽 아래에 작은 "실행" 창이 떠요</span>`,
+    paste: `<b><kbd>Ctrl</kbd> + <kbd>V</kbd> 로 붙여넣고 <kbd>Enter</kbd></b><br><span class="muted">파란 창이 열리고 설치가 저절로 진행돼요 (5~15분). 필요한 건 전부 자동으로 깔려요.<br>"확인 창"이 뜨면 [예] · "설치 끝!"이 나오면 프로그램이 열려요</span>`,
     uninstallHelp: "PowerShell에 붙여넣고 Enter 하면 추출기와 자동 실행이 모두 지워져요.",
     uninstall: `Get-CimInstance Win32_Process -Filter "Name like 'python%'" | ? { $_.CommandLine -like '*ReelsExtractor*' } | % { Stop-Process -Id $_.ProcessId -Force }; Remove-Item "$([Environment]::GetFolderPath('Startup'))\\ReelsExtractor.vbs", "$env:USERPROFILE\\ReelsExtractor", "$([Environment]::GetFolderPath('Desktop'))\\릴스 A+B=C.url", "$([Environment]::GetFolderPath('Desktop'))\\릴스 A+B=C.lnk", "$([Environment]::GetFolderPath('Programs'))\\릴스 A+B=C.lnk" -Recurse -Force -ErrorAction SilentlyContinue`,
   },
