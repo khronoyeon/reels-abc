@@ -1,4 +1,4 @@
-# Windows 내장 글자 인식(Windows.Media.Ocr)으로 이미지 속 글자 읽기 — 타이틀 자막용
+﻿# Windows 내장 글자 인식(Windows.Media.Ocr)으로 이미지 속 글자 읽기 — 타이틀 자막용
 # 출력: 줄마다 JSON {file, text, top(위쪽 끝, 0~1 아래가 0), h(높이 0~1)}
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Paths)
 $ErrorActionPreference = 'Stop'

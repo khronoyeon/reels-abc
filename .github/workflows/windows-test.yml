@@ -12,13 +12,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 한국어 글자 인식 기능 설치 (한국어 Windows에는 기본 포함)
-        shell: powershell
+        shell: pwsh
         run: |
           Add-WindowsCapability -Online -Name "Language.OCR~~~ko-KR~0.0.1.0" | Out-Null
           Get-WindowsCapability -Online -Name "Language.OCR~~~ko-KR*" | Format-Table Name, State
 
       - name: 설치 파일(zip) 만들고 로컬 서버로 내보내기
-        shell: powershell
+        shell: pwsh
         run: |
           $stage = "$env:RUNNER_TEMP\site"
           New-Item -ItemType Directory -Force "$stage\pkg\reels-abc-helper" | Out-Null
@@ -37,10 +37,10 @@ jobs:
           REELS_NO_OPEN: '1'
         run: |
           powershell -ExecutionPolicy Bypass -c "irm http://127.0.0.1:8000/install.ps1 | iex"
-          if ($LASTEXITCODE -ne 0) { throw "설치 실패" }
+          if ($LASTEXITCODE -ne 0) { throw "install failed" }
 
       - name: 설치 결과 확인 (바로가기 · 자동 실행 · 추출기)
-        shell: powershell
+        shell: pwsh
         run: |
           $desk = [Environment]::GetFolderPath('Desktop'); $startup = [Environment]::GetFolderPath('Startup'); $progs = [Environment]::GetFolderPath('Programs')
           foreach ($f in @("$desk\릴스 A+B=C.lnk", "$progs\릴스 A+B=C.lnk", "$startup\ReelsExtractor.lnk")) { if (-not (Test-Path $f)) { throw "없음: $f" } else { "OK $f" } }
@@ -51,7 +51,7 @@ jobs:
           (Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing).StatusCode
 
       - name: 받아쓰기 + 타이틀 자막 읽기 (테스트 영상)
-        shell: powershell
+        shell: pwsh
         run: |
           $sw = [Diagnostics.Stopwatch]::StartNew()
           $body = @{ url = 'http://127.0.0.1:8000/sample.mp4'; model = 'auto'; language = 'ko' } | ConvertTo-Json
@@ -70,7 +70,7 @@ jobs:
           if ($v.StatusCode -ne 206) { throw "영상 구간 전송 실패" }
 
       - name: 데이터 저장 확인
-        shell: powershell
+        shell: pwsh
         run: |
           $s = @{ refs = @(@{ id = 'x'; group = 'A'; title = '테스트'; units = @() }); saved = @() } | ConvertTo-Json -Depth 5
           Invoke-RestMethod http://127.0.0.1:8765/api/state -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($s)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } | Out-Null
@@ -79,7 +79,7 @@ jobs:
 
       - name: (참고) 실제 인스타 릴스 — 데이터센터라 막힐 수 있음
         continue-on-error: true
-        shell: powershell
+        shell: pwsh
         run: |
           $body = @{ url = 'https://www.instagram.com/reel/DeGJIEHOYic/'; model = 'auto' } | ConvertTo-Json
           $r = Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900
@@ -87,5 +87,5 @@ jobs:
 
       - name: 추출기 로그
         if: always()
-        shell: powershell
+        shell: pwsh
         run: Get-Content "$env:USERPROFILE\ReelsExtractor\helper\helper.log" -Tail 60 -ErrorAction SilentlyContinue
