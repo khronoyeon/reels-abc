@@ -1,5 +1,7 @@
 yt-dlp
 faster-whisper
+# 최신 PyAV(16+)는 faster-whisper가 쓰는 옵션(metadata_errors)을 없애서 받아쓰기가 실패함
+av<16
 imageio-ffmpeg
 pyobjc-framework-Vision; sys_platform == "darwin"
 pyobjc-framework-Quartz; sys_platform == "darwin"
