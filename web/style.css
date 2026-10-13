@@ -392,3 +392,4 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--line-2); 
 
 .open-status { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); color: var(--ink); border-radius: 12px; padding: 12px 14px; margin-bottom: 6px; font-size: 14px; animation: fadeUp .3s var(--ease); }
 .open-status.ok { background: rgba(3,178,108,.1); color: var(--cta); font-weight: 600; }
+.logo-tag { color: var(--accent); font-weight: 800; margin-right: 2px; }
