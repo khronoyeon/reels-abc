@@ -780,8 +780,11 @@ class Handler(SimpleHTTPRequestHandler):
         model = data.get("model") or CONFIG["model"]
         language = data.get("language") or CONFIG["language"]
         cookies = data.get("cookies_from_browser", CONFIG["cookies_from_browser"])
+        import time
+        t0 = time.time()
         PROGRESS[url] = "download"
         video, info = ensure_video(url, cookies)
+        t1 = time.time()
         PROGRESS[url] = "transcribe"
         with tempfile.TemporaryDirectory(prefix="reels-abc-") as tmp:
             wav = Path(tmp) / "audio.wav"
@@ -793,12 +796,14 @@ class Handler(SimpleHTTPRequestHandler):
                 else:
                     wav, info = download_audio(url, tmp, cookies)
             segments, lang = transcribe_audio(wav, model, language)
+        t2 = time.time()
         PROGRESS[url] = "title"
         try:
             title_text = screen_title(video)
         except Exception as e:  # noqa: BLE001
             print(f"[정보] 타이틀 자막 읽기 실패: {e}")
             title_text = ""
+        print(f"[시간] 영상 {t1 - t0:.1f}s / 받아쓰기 {t2 - t1:.1f}s / 타이틀 {time.time() - t2:.1f}s")
         return {
             "url": url,
             "title": info.get("title") or info.get("description", "")[:60],

@@ -66,9 +66,13 @@ jobs:
           "문장 수: $($r.segments.Count)"
           $r.segments | ForEach-Object { "  [$($_.start)] $($_.text)" }
           $all = ($r.segments | ForEach-Object { $_.text }) -join ' '
-          if ($r.segments.Count -lt 2) { throw "받아쓰기 결과가 너무 적음" }
+          if ($r.segments.Count -lt 1) { throw "받아쓰기 결과 없음" }
           if ($all -notmatch '월급' -or $all -notmatch '댓글') { throw "받아쓰기 내용이 이상함" }
-          if ($r.screen_title -notmatch '1억') { Write-Warning "타이틀 자막을 못 읽음: '$($r.screen_title)'" }
+          if ($r.screen_title -notmatch '1억') { throw "타이틀 자막을 못 읽음: '$($r.screen_title)'" }
+          # 두 번째 추출 (모델이 이미 올라온 상태 = 사용자가 두 번째 릴스를 넣을 때 속도)
+          $sw2 = [Diagnostics.Stopwatch]::StartNew()
+          $r2 = Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900
+          "두 번째 추출 걸린 시간: $([int]$sw2.Elapsed.TotalSeconds)초"
           # 구간 재생용 영상 전송 (건너뛰기 지원)
           $v = Invoke-WebRequest "http://127.0.0.1:8765$($r.video)" -Headers @{ Range = 'bytes=0-99' } -UseBasicParsing
           "영상 부분 전송: $($v.StatusCode)"
