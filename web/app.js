@@ -798,25 +798,15 @@ $("#playerClose").addEventListener("click", () => {
 });
 
 // ------------------------------------------------------------ C 조합
-// 대본 순서: 후킹 → 본문 → CTA.
-// 같은 구간 안에서는 "먼저 고른 문단"이 앞에 오고, 한 문단 안의 문장은 클릭 순서와 상관없이 원래 문장 순서대로.
+// 대본 순서 = 내가 고른 순서 그대로 (오른쪽 목록에서 끌어서 바꿀 수 있음)
 function pickedItems() {
-  const raw = state.picks.map((p, clickNo) => {
+  return state.picks.map((p, clickNo) => {
     const info = unitInfo(p.r, p.u);
     return info && {
       ...p, clickNo, group: info.ref.group, title: info.ref.title, label: info.u.label, text: info.u.text,
-      sec: info.sec, stitle: info.stitle, pos: info.ref.units.indexOf(info.u), block: `${p.r}:${info.u.label}:${info.sec}`,
+      sec: info.sec, stitle: info.stitle, block: `${p.r}:${info.u.label}:${info.sec}`,
     };
   }).filter(Boolean);
-  // 문단 순서: 끌어서 정한 순서가 있으면 그대로, 없으면 먼저 고른 순
-  const rank = new Map();
-  for (const x of raw) {
-    if (rank.has(x.block)) continue;
-    const manual = (state.order?.[x.label] || []).indexOf(x.block);
-    rank.set(x.block, manual >= 0 ? manual : 1e6 + x.clickNo);
-  }
-  return SECTIONS.flatMap((s) => raw.filter((x) => x.label === s)
-    .sort((a, b) => rank.get(a.block) - rank.get(b.block) || a.pos - b.pos));
 }
 
 // 화면에 보이는 번호 = 완성 대본에서의 순서
@@ -825,23 +815,21 @@ function computeOrder() {
   orderNo = new Map(pickedItems().map((x, i) => [`${x.r}:${x.u}`, i + 1]));
 }
 
-// 후킹 → 본문 → CTA 순으로, 각 구간 안에서는 고른 순서대로. 본문은 (레퍼런스, 섹션)이 바뀌면 빈 줄.
+// 고른 순서대로 이어 붙임. 후킹/본문/CTA가 바뀌는 곳에 제목, 다른 문단으로 넘어가면 빈 줄.
 function composeText(items) {
-  const out = [];
-  for (const s of SECTIONS) {
-    const list = items.filter((x) => x.label === s);
-    if (!list.length) continue;
-    const lines = [];
-    let prevKey = null;
-    for (const x of list) {
-      const key = `${x.r}:${x.sec}`;
-      if (s === "body" && prevKey && key !== prevKey) lines.push("");
-      lines.push(x.text);
-      prevKey = key;
+  const lines = [];
+  let prevLabel = null, prevBlock = null;
+  for (const x of items) {
+    if (x.label !== prevLabel) {
+      if (lines.length) lines.push("");
+      lines.push(`[${SECTION_KO[x.label]}]`);
+    } else if (x.block !== prevBlock) {
+      lines.push("");
     }
-    out.push(`[${SECTION_KO[s]}]\n${lines.join("\n")}`);
+    lines.push(x.text);
+    prevLabel = x.label; prevBlock = x.block;
   }
-  return out.join("\n\n");
+  return lines.join("\n");
 }
 
 let prevChips = new Set();
@@ -853,28 +841,15 @@ function renderC() {
   $("#toC").classList.toggle("hidden", !items.length);
   $("#clearPicks").classList.toggle("hidden", !items.length);
   $("#cParts").innerHTML = items.length
-    ? SECTIONS.map((sec) => {
-        const list = items.filter((x) => x.label === sec);
-        if (!list.length) return "";
-        const blocks = [];
-        for (const x of list) {
-          let b = blocks.find((y) => y.key === x.block);
-          if (!b) blocks.push(b = { key: x.block, x, lines: [] });
-          b.lines.push(x);
-        }
-        return `<div class="mix-sec ${sec}"><div class="mix-label">${SECTION_KO[sec]}</div>
-          <div class="blocks" data-label="${sec}">${blocks.map((b) => {
-            const name = sec === "body" ? (b.x.stitle || `본문 ${b.x.sec}`) : SECTION_KO[sec];
-            const isNew = b.lines.some((l) => !prevChips.has(`${l.r}:${l.u}`));
-            return `<div class="cblock ${isNew ? "new" : ""}" draggable="${blocks.length > 1}" data-block="${b.key}" data-label="${sec}">
-              ${blocks.length > 1 ? `<span class="grip" title="끌어서 순서 바꾸기">⠿</span>` : ""}
-              <b class="g" style="background:${gColor(b.x.group)}">${b.x.group}</b>
-              <div class="cb-main"><div class="cb-title">${esc(name)} <span>· ${b.lines.length}문장</span></div>
-              <div class="cb-prev">${esc(b.lines[0].text)}</div></div>
-              <button class="x" data-act="unpick-block" title="이 문단 빼기">✕</button>
-            </div>`;
-          }).join("")}</div></div>`;
-      }).join("")
+    ? `<div class="picks-hint">고른 순서대로 들어가요 · <b>⠿</b>를 끌어서 순서 바꾸기</div><div class="plist">${items.map((x, i) => `
+      <div class="pitem ${x.label} ${prevChips.has(`${x.r}:${x.u}`) ? "" : "new"}" draggable="true" data-r="${x.r}" data-u="${x.u}">
+        <span class="grip" title="끌어서 순서 바꾸기">⠿</span>
+        <span class="pnum">${i + 1}</span>
+        <b class="g" style="background:${gColor(x.group)}">${x.group}</b>
+        <span class="plabel">${SECTION_KO[x.label]}</span>
+        <span class="ptext" title="${esc(x.text)}">${esc(x.text)}</span>
+        <button class="x" data-act="unpick" title="빼기">✕</button>
+      </div>`).join("")}</div>`
     : `<div class="c-empty"><div class="c-empty-icon">↖</div>레퍼런스에서 문장을 <b>클릭</b>하거나<br><b>드래그</b>해서 골라보세요</div>`;
   $("#recombine").classList.toggle("hidden", !cDirty || !items.length);
   prevChips = nowChips;
@@ -886,41 +861,37 @@ function recombine() {
 }
 
 $("#cParts").addEventListener("click", (e) => {
-  if (e.target.dataset.act !== "unpick-block") return;
-  const key = e.target.closest(".cblock").dataset.block;
-  const ids = new Set(pickedItems().filter((x) => x.block === key).map((x) => `${x.r}:${x.u}`));
-  state.picks = state.picks.filter((p) => !ids.has(`${p.r}:${p.u}`));
-  save(); refreshSelection(); recombine();
+  if (e.target.dataset.act !== "unpick") return;
+  const it = e.target.closest(".pitem");
+  togglePick(it.dataset.r, it.dataset.u);
 });
 
-// 문단 카드를 끌어서 순서 바꾸기 (같은 구간 안에서)
-let dragBlock = null;
+// 오른쪽 목록에서 문장을 끌어서 순서 바꾸기
+let dragItem = null;
 $("#cParts").addEventListener("dragstart", (e) => {
-  dragBlock = e.target.closest(".cblock");
-  if (!dragBlock) return;
+  dragItem = e.target.closest(".pitem");
+  if (!dragItem) return;
   e.dataTransfer.effectAllowed = "move";
-  e.dataTransfer.setData("text/plain", dragBlock.dataset.block);
-  requestAnimationFrame(() => dragBlock?.classList.add("dragging"));
+  e.dataTransfer.setData("text/plain", dragItem.dataset.u);
+  requestAnimationFrame(() => dragItem?.classList.add("dragging"));
 });
 $("#cParts").addEventListener("dragover", (e) => {
-  if (!dragBlock) return;
-  const list = e.target.closest(".blocks");
-  if (!list || list.dataset.label !== dragBlock.dataset.label) return;
+  if (!dragItem) return;
+  const list = e.target.closest(".plist");
+  if (!list) return;
   e.preventDefault();
-  const after = [...list.querySelectorAll(".cblock:not(.dragging)")].find((el) => {
+  const after = [...list.querySelectorAll(".pitem:not(.dragging)")].find((el) => {
     const r = el.getBoundingClientRect();
     return e.clientY < r.top + r.height / 2;
   });
-  if (after) { if (after.previousElementSibling !== dragBlock) list.insertBefore(dragBlock, after); }
-  else if (list.lastElementChild !== dragBlock) list.appendChild(dragBlock);
+  if (after) { if (after.previousElementSibling !== dragItem) list.insertBefore(dragItem, after); }
+  else if (list.lastElementChild !== dragItem) list.appendChild(dragItem);
 });
 $("#cParts").addEventListener("dragend", () => {
-  if (!dragBlock) return;
-  const list = dragBlock.closest(".blocks");
-  dragBlock.classList.remove("dragging");
-  state.order = state.order || {};
-  state.order[list.dataset.label] = [...list.querySelectorAll(".cblock")].map((el) => el.dataset.block);
-  dragBlock = null;
+  if (!dragItem) return;
+  dragItem.classList.remove("dragging");
+  state.picks = [...$$("#cParts .pitem")].map((el) => ({ r: el.dataset.r, u: el.dataset.u }));
+  dragItem = null;
   cDirty = false;
   save(); refreshSelection(); recombine();
 });

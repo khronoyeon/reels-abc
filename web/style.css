@@ -393,3 +393,19 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--line-2); 
 .open-status { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); color: var(--ink); border-radius: 12px; padding: 12px 14px; margin-bottom: 6px; font-size: 14px; animation: fadeUp .3s var(--ease); }
 .open-status.ok { background: rgba(3,178,108,.1); color: var(--cta); font-weight: 600; }
 .logo-tag { color: var(--accent); font-weight: 800; margin-right: 2px; }
+
+/* 내 대본: 고른 순서 목록 (끌어서 순서 바꾸기) */
+.picks-hint { font-size: 12.5px; color: var(--muted); }
+.plist { display: flex; flex-direction: column; gap: 4px; }
+.pitem { display: flex; align-items: center; gap: 7px; padding: 7px 6px 7px 8px; background: var(--bg-2); border: 1px solid var(--line); border-left: 3px solid var(--c); border-radius: 0; cursor: grab; transition: transform .15s var(--ease), border-color .15s, opacity .15s; }
+.pitem.hook { --c: var(--hook); } .pitem.body { --c: var(--body); } .pitem.cta { --c: var(--cta); }
+.pitem.new { animation: chipIn .28s var(--ease); }
+.pitem:hover { border-color: var(--line-2); border-left-color: var(--c); }
+.pitem.dragging { opacity: .45; border-style: dashed; }
+.pitem .grip { color: var(--muted); font-size: 13px; }
+.pitem .pnum { min-width: 18px; height: 18px; border-radius: 50%; background: var(--c); color: #fff; font-size: 10.5px; font-weight: 800; display: grid; place-items: center; flex-shrink: 0; }
+.pitem .g { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; color: #fff; font-size: 9.5px; flex-shrink: 0; }
+.pitem .plabel { font-size: 11px; font-weight: 700; color: var(--c); flex-shrink: 0; }
+.pitem .ptext { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.pitem .x { border: none; background: none; color: var(--muted); padding: 2px 5px; font-size: 11px; font-weight: 400; }
+.pitem .x:hover { color: var(--danger); background: none; }
