@@ -11,6 +11,8 @@ const CONNECTIVE_END_RE = /(니까|으니|면|는데|해서|려면|도록)\s*[.,
 // 본문 안에서 새 섹션이 시작되는 표시
 const SECTION_START_RE = /^(첫\s?번째|두\s?번째|세\s?번째|네\s?번째|다섯\s?번째|여섯\s?번째|첫째|둘째|셋째|넷째|다섯째|\d+\s*(번|위|등|단계|\.|\))|다음(은|으로)|마지막(으로|은)|또\s?하나|반대로|그런데|하지만|결론|정리하면|주의|단점|장점)/;
 
+// "그리고 대망의 1위는요", "드디어 TOP 1" 처럼 앞에 말이 붙은 순위 문장도 새 섹션
+const RANK_START_RE = /^(그리고|자|이제|드디어|대망의|마지막(으로)?|다음(은|으로)?|바로)?[\s,]*(대망의|영광의|마지막)?\s*(TOP\s*)?\d+\s*(위|번째|등)/i;
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const fmtNum = (n) => {
@@ -51,6 +53,10 @@ function normalize(s) {
   for (const r of s.refs) {
     r.units.forEach((u) => (u.id ||= uid()));
     if (!r.sectioned) { autoSections(r.units); r.sectioned = true; }
+    if (!r.rankFix) { // "그리고 대망의 1위는요" 같은 순위 문장 앞에서 본문 섹션 나누기 (기존 나누기는 그대로)
+      r.units.forEach((u) => { if (u.label === "body" && RANK_START_RE.test(u.text)) u.brk = true; });
+      r.rankFix = true;
+    }
     if (/^Video by /i.test(r.title || "") && r.uploader) r.title = niceTitle(r);
   }
   s.picks = (s.picks || []).filter((p) => typeof p === "object" && p && p.u);
@@ -182,7 +188,7 @@ function autoSections(units) {
   let first = true;
   for (const u of units) {
     if (u.label !== "body") { u.brk = false; continue; }
-    u.brk = first || SECTION_START_RE.test(u.text);
+    u.brk = first || SECTION_START_RE.test(u.text) || RANK_START_RE.test(u.text);
     if (u.brk && !first) u.stitle = "";
     first = false;
   }
@@ -1155,4 +1161,20 @@ if (IS_LOCAL) (async () => {
 })();
 // 설치 직후 바로 초록불이 켜지도록: 꺼져 있을 땐 3초마다, 켜져 있으면 20초마다 확인
 if (!isRemote) setTimeout(backfillStats, 1500);
+// 프로그램이 업데이트되면 열려 있는 창에도 알려줌
+let webVersion = null;
+async function checkWebVersion() {
+  try {
+    const v = (await (await fetch(`${location.origin}/api/webversion`, { cache: "no-store" })).json()).version;
+    if (webVersion === null) webVersion = v;
+    else if (v && v !== webVersion && !$(".update-bar")) {
+      const bar = document.createElement("div");
+      bar.className = "update-bar";
+      bar.innerHTML = `새 버전이 있어요 <button class="primary">새로고침</button>`;
+      $("button", bar).onclick = async () => { await pushState(); location.reload(); };
+      document.body.appendChild(bar);
+    }
+  } catch {}
+}
+if (IS_LOCAL) { checkWebVersion(); setInterval(checkWebVersion, 30000); }
 if (!isRemote) (function poll() { setTimeout(() => checkHelper().finally(poll), helper.ok ? 20000 : 10000); })();

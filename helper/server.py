@@ -853,6 +853,9 @@ class Handler(SimpleHTTPRequestHandler):
                 "ai": claude_client() is not None,
                 "cookies_from_browser": CONFIG["cookies_from_browser"],
             })
+        if self.path.startswith("/api/webversion"):
+            files = [WEB_DIR / n for n in ("index.html", "app.js", "style.css")]
+            return self._json(200, {"version": str(int(max(f.stat().st_mtime for f in files if f.exists())))})
         if self.path.startswith("/api/progress"):
             from urllib.parse import parse_qs
             q = parse_qs(urlparse(self.path).query)

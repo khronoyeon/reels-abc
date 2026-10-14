@@ -409,3 +409,5 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--line-2); 
 .pitem .ptext { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
 .pitem .x { border: none; background: none; color: var(--muted); padding: 2px 5px; font-size: 11px; font-weight: 400; }
 .pitem .x:hover { color: var(--danger); background: none; }
+
+.update-bar { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 80; display: flex; align-items: center; gap: 12px; background: #191f28; color: #fff; padding: 8px 8px 8px 18px; border-radius: 14px; font-weight: 600; box-shadow: 0 12px 30px rgba(2,32,71,.25); animation: toastIn .3s var(--ease); }
