@@ -31,8 +31,9 @@ jobs:
           Compress-Archive -Path "$stage\pkg\reels-abc-helper" -DestinationPath "$stage\reels-abc-helper.zip"
           Copy-Item web\install.ps1, web\install.cmd, web\install_win.py, tests\sample.mp4 -Destination $stage
           Start-Process python -ArgumentList "`"$PWD\tests\serve.py`"", "`"$stage`"" -WindowStyle Hidden
-          Start-Sleep 3
-          (Invoke-WebRequest http://127.0.0.1:8000/install.ps1 -UseBasicParsing).StatusCode
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) { try { (Invoke-WebRequest http://127.0.0.1:8000/install.ps1 -UseBasicParsing).StatusCode; $ok = $true; break } catch { Start-Sleep 1 } }
+          if (-not $ok) { throw "test file server did not start" }
 
       - name: 사용자와 같은 방식으로 설치 (PowerShell 방식)
         if: matrix.installer == 'powershell'
