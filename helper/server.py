@@ -916,6 +916,10 @@ class Handler(SimpleHTTPRequestHandler):
             if route == "/api/state":
                 write_state(data)
                 return self._json(200, {"ok": True})
+            if route == "/api/shutdown":  # 업데이트 설치 때 파일을 바꿀 수 있도록 스스로 종료
+                self._json(200, {"ok": True})
+                threading.Thread(target=lambda: (__import__("time").sleep(0.3), os._exit(0)), daemon=True).start()
+                return
             if route == "/api/export":
                 return self._json(200, {"path": export_state()})
             if route == "/api/open":

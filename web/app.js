@@ -991,11 +991,11 @@ const SETUP = {
     uninstall: `launchctl bootout gui/$(id -u)/app.reelsabc.helper; find ~/ReelsExtractor -mindepth 1 -maxdepth 1 ! -name data -exec rm -rf {} +; rm -rf ~/Library/LaunchAgents/app.reelsabc.helper.plist ~/Desktop/"릴스 A+B=C.webloc" ~/Desktop/"릴스 A+B=C" ~/Applications/"릴스 A+B=C.app"`,
   },
   win: {
-    cmd: `powershell -NoExit -ExecutionPolicy Bypass -c "irm ${SITE}/install.ps1 | iex"`,
+    cmd: `cmd /k curl -fsSL ${SITE}/install.cmd -o "%TEMP%\\reels-install.cmd" && "%TEMP%\\reels-install.cmd"`,
     open: `<b>키보드에서 <kbd>⊞ Windows</kbd> 키를 누른 채 <kbd>R</kbd></b><br><span class="muted">화면 왼쪽 아래에 작은 "실행" 창이 떠요</span>`,
-    paste: `<b><kbd>Ctrl</kbd> + <kbd>V</kbd> 로 붙여넣고 <kbd>Enter</kbd></b><br><span class="muted">파란 창이 열리고 설치가 저절로 진행돼요 (5~15분). 필요한 건 전부 자동으로 깔려요.<br>"확인 창"이 뜨면 [예] · "설치 끝!"이 나오면 프로그램이 열려요</span>`,
-    uninstallHelp: "Windows 키 + R → powershell 입력 → 열린 창에 붙여넣고 Enter 하면 프로그램이 지워져요. 만든 레퍼런스·대본은 남겨둬서, 다시 설치하면 그대로 나와요.",
-    uninstall: `Get-CimInstance Win32_Process -Filter "Name like 'python%'" | ? { $_.CommandLine -like '*ReelsExtractor*' } | % { Stop-Process -Id $_.ProcessId -Force }; Get-ChildItem "$env:USERPROFILE\\ReelsExtractor" -Exclude data -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force; Remove-Item "$([Environment]::GetFolderPath('Startup'))\\ReelsExtractor.lnk", "$([Environment]::GetFolderPath('Startup'))\\ReelsExtractor.vbs", "$([Environment]::GetFolderPath('Desktop'))\\릴스 A+B=C.lnk", "$([Environment]::GetFolderPath('Programs'))\\릴스 A+B=C.lnk", "HKCU:\\Software\\Classes\\reelsabc" -Recurse -Force -ErrorAction SilentlyContinue`,
+    paste: `<b><kbd>Ctrl</kbd> + <kbd>V</kbd> 로 붙여넣고 <kbd>Enter</kbd></b><br><span class="muted">검은 창이 열리고 설치가 저절로 진행돼요 (5~15분). 필요한 건 전부 자동으로 깔려요.<br>"확인 창"이 뜨면 [예] · "설치 끝!"이 나오면 프로그램이 열려요</span>`,
+    uninstallHelp: "Windows 키 + R → 붙여넣고 Enter 하면 프로그램이 지워져요. 만든 레퍼런스·대본은 남겨둬서, 다시 설치하면 그대로 나와요.",
+    uninstall: `cmd /c "taskkill /F /T /IM pythonw.exe & reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v ReelsExtractor /f & reg delete HKCU\\Software\\Classes\\reelsabc /f & rmdir /s /q "%USERPROFILE%\\ReelsExtractor\\.venv" "%USERPROFILE%\\ReelsExtractor\\helper" "%USERPROFILE%\\ReelsExtractor\\web" "%USERPROFILE%\\ReelsExtractor\\media" & del "%USERPROFILE%\\Desktop\\릴스 A+B=C.url" "%USERPROFILE%\\Desktop\\릴스 A+B=C.lnk" "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\릴스 A+B=C.url" "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\릴스 A+B=C.lnk" "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\ReelsExtractor.lnk""`,
   },
 };
 function renderSetup() {
