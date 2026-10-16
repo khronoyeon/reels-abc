@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -165,6 +166,17 @@ def resolve_model(model):
     return model
 
 
+def fw_model(model):
+    """faster-whisper 모델을 한 번만 메모리에 올림 (_model_lock 안에서 호출)."""
+    from faster_whisper import WhisperModel
+    if model not in _fw_models:
+        t = time.time()
+        # 그래픽카드 드라이버 상태와 상관없이 항상 되도록 CPU로 (자동 선택 시 CUDA 라이브러리 없으면 오류)
+        _fw_models[model] = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
+        print(f"[시간] 받아쓰기 모델 올리기 {time.time() - t:.1f}s ({model}, CPU {os.cpu_count()}개)")
+    return _fw_models[model]
+
+
 def transcribe_audio(path, model, language):
     model = resolve_model(model)
     if ENGINE == "mlx-whisper":
@@ -200,11 +212,10 @@ def transcribe_audio(path, model, language):
     if ENGINE == "faster-whisper":
         from faster_whisper import WhisperModel
 
+        t_wait = time.time()
         with _model_lock:
-            if model not in _fw_models:
-                # 그래픽카드 드라이버 상태와 상관없이 항상 되도록 CPU로 (자동 선택 시 CUDA 라이브러리 없으면 오류)
-                _fw_models[model] = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
-            fw = _fw_models[model]
+            fw = fw_model(model)
+            print(f"[시간] 모델 대기·준비 {time.time() - t_wait:.1f}s")
             # 언어 감지는 받아쓰기 안에서 한 번에 (따로 감지하면 가장 무거운 단계가 두 번 돌아 느려짐)
             lang = None if language in ("", None, "auto", "ko") else language
             segments, info = fw.transcribe(
@@ -1021,8 +1032,14 @@ def warm_up():
         tmp = Path(tempfile.gettempdir()) / "reels-abc-warmup.wav"
         with wave.open(str(tmp), "wb") as w:
             w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\x00\x00" * 16000)
-        transcribe_audio(tmp, CONFIG["model"], "ko")
-        print("[정보] 받아쓰기 모델 준비 완료")
+        t = time.time()
+        if ENGINE == "faster-whisper":
+            # Windows: 모델만 올림 (무음을 받아쓰면 CPU에서 몇 분씩 걸려 첫 추출이 그만큼 기다리게 됨)
+            with _model_lock:
+                fw_model(resolve_model(CONFIG["model"]))
+        else:
+            transcribe_audio(tmp, CONFIG["model"], "ko")
+        print(f"[정보] 받아쓰기 모델 준비 완료 ({time.time() - t:.1f}s)")
     except Exception as e:  # noqa: BLE001
         print(f"[정보] 모델 미리 올리기 실패(첫 추출 때 올림): {e}")
 
