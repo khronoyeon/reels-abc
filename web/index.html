@@ -115,7 +115,15 @@
           <option value="en">영어</option>
           <option value="ja">일본어</option>
         </select>
-        <label class="lbl">인스타가 막을 때: 로그인된 브라우저</label>
+        <label class="lbl">인스타 로그인 <span class="hint">— 나이·지역 제한 릴스, 조회수에 필요해요</span></label>
+        <div class="ig-row">
+          <span id="igStatus" class="ig-status">확인 중…</span>
+          <button id="igLoginBtn" type="button" class="primary sm">인스타 로그인하기</button>
+          <button id="igLogoutBtn" type="button" class="link hidden">로그아웃</button>
+        </div>
+        <details class="adv">
+          <summary>고급</summary>
+          <label class="lbl">대신 이 브라우저의 로그인 쓰기</label>
         <select id="setCookies">
           <option value="">사용 안 함</option>
           <option value="chrome">Chrome</option>
@@ -124,8 +132,6 @@
           <option value="edge">Edge</option>
           <option value="firefox">Firefox</option>
         </select>
-        <details class="adv">
-          <summary>고급</summary>
           <label class="lbl">추출기 주소</label>
           <input id="setHelper" value="http://127.0.0.1:8765">
         </details>

@@ -250,13 +250,13 @@ async function addFromUrl(group, url, form) {
   } catch (err) {
     const m = err.message;
     const msg = m.includes("Failed to fetch") ? "추출기가 꺼져 있어요. 프로그램을 껐다 켜거나, 설정 탭의 설치 명령을 다시 실행해 주세요."
-      : /certain audiences|나이·지역/i.test(m) ? "나이·지역 제한이 걸린 릴스라 인스타 로그인이 있어야 볼 수 있어요. 크롬·웨일·엣지 중 하나에서 인스타에 로그인한 뒤 다시 [가져오기]를 눌러주세요."
-      : /login|로그인|cookie/i.test(m) ? "인스타가 로그인을 요구해요. 크롬·웨일·엣지 중 하나에서 인스타에 로그인한 뒤 다시 [가져오기]를 눌러주세요."
-      : /private|비공개|not available|unavailable/i.test(m) ? "비공개이거나 삭제된 영상이에요. (비공개 계정이면 그 계정을 팔로우한 인스타로 브라우저에 로그인해 두면 돼요)"
+      : /certain audiences|나이·지역/i.test(m) ? "나이·지역 제한이 걸린 릴스라 인스타 로그인이 있어야 볼 수 있어요. 아래 [인스타 로그인하기]를 눌러 한 번만 로그인해 주세요."
+      : /login|로그인|cookie/i.test(m) ? "인스타가 로그인을 요구해요. 아래 [인스타 로그인하기]를 눌러 한 번만 로그인해 주세요."
+      : /private|비공개|not available|unavailable/i.test(m) ? "비공개이거나 삭제된 영상이에요. 비공개 계정이면 그 계정을 팔로우한 인스타로 아래 [인스타 로그인하기]를 해주세요."
       : /Unsupported URL|올바른 링크/i.test(m) ? "릴스·쇼츠·틱톡 링크가 맞는지 확인해 주세요."
       : /timed out|timeout|Network|연결/i.test(m) ? "인터넷 연결이 불안정해요. 잠시 후 다시 시도해 주세요."
       : m.split("\n")[0];
-    loading[group] = { ...loading[group], error: msg };
+    loading[group] = { ...loading[group], error: msg, login: /instagram\.com/.test(url) && /로그인/.test(msg) };
     renderColumn(group);
   } finally {
     clearInterval(tick);
@@ -490,7 +490,7 @@ function refCard(ref) {
 function loadingHtml(group) {
   const l = loading[group];
   if (!l) return "";
-  if (l.error) return `<div class="loading err"><b>가져오지 못했어요</b><p>${esc(l.error)}</p><button class="link" data-act="dismiss" data-group="${group}">닫기</button></div>`;
+  if (l.error) return `<div class="loading err"><b>가져오지 못했어요</b><p>${esc(l.error)}</p><div class="err-actions">${l.login ? `<button class="primary sm" data-act="iglogin" data-group="${group}">인스타 로그인하기</button>` : ""}<button class="link" data-act="dismiss" data-group="${group}">닫기</button></div></div>`;
   const s = Math.round((Date.now() - l.started) / 1000);
   const waiting = queues[group]?.list.length || 0;
   return `<div class="loading"><div class="steps-live">${stepsHtml(l.stage)}</div>
@@ -664,6 +664,8 @@ function refMenu(ref, anchor) {
 const board = $(".workspace");
 board.addEventListener("click", (e) => {
   if (e.target.closest("[contenteditable=true]")) return;
+  const igl = e.target.closest("[data-act=iglogin]");
+  if (igl) { igLogin(igl.dataset.group); return; }
   const dismiss = e.target.closest("[data-act=dismiss]");
   if (dismiss) { loading[dismiss.dataset.group] = null; renderColumn(dismiss.dataset.group); return; }
   const card = e.target.closest(".ref");
@@ -971,8 +973,49 @@ $("#savedList").addEventListener("click", (e) => {
   if (act === "del") ask("이 대본을 삭제할까요?", { ok: "삭제", danger: true }).then((y) => { if (y) { state.saved = state.saved.filter((x) => x !== c); save(); renderSaved(); } });
 });
 
+// ------------------------------------------------------------ 인스타 로그인 (프로그램 전용 로그인 창)
+// Windows 크롬·엣지는 저장된 로그인을 다른 프로그램이 못 읽게 막아둠 → 추출기가 띄운 전용 창에서 한 번 로그인
+let igPolling = false;
+async function igLogin(group) {
+  const retryUrl = group && loading[group]?.url;
+  try { await api("/api/iglogin", {}); }
+  catch (e) { toast(e.message, 5000); return; }
+  toast("방금 열린 창에서 인스타에 로그인해 주세요. 로그인하면 창이 저절로 닫혀요.", 8000);
+  if (igPolling) return;
+  igPolling = true;
+  const until = Date.now() + 15 * 60 * 1000;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 2000));
+    let st;
+    try { st = await api("/api/iglogin"); } catch { continue; }
+    if (st.loggedIn && st.state === "done") {
+      igPolling = false;
+      renderIgStatus();
+      if (retryUrl) { toast("로그인 완료! 다시 가져올게요"); loading[group] = null; enqueue(group, [retryUrl]); }
+      else toast("인스타 로그인 완료!");
+      return;
+    }
+    if (st.state === "idle") break; // 로그인 안 하고 창을 닫음
+  }
+  igPolling = false;
+}
+async function renderIgStatus() {
+  const el = $("#igStatus");
+  if (!el) return;
+  try {
+    const st = await api("/api/iglogin");
+    el.textContent = st.loggedIn ? "로그인됨" : "로그인 안 됨";
+    el.className = "ig-status " + (st.loggedIn ? "ok" : "");
+    $("#igLoginBtn").textContent = st.loggedIn ? "다시 로그인" : "인스타 로그인하기";
+    $("#igLogoutBtn").classList.toggle("hidden", !st.loggedIn);
+  } catch { el.textContent = "추출기가 꺼져 있어요"; }
+}
+$("#igLoginBtn")?.addEventListener("click", () => igLogin(null));
+$("#igLogoutBtn")?.addEventListener("click", async () => { await api("/api/iglogout", {}).catch(() => {}); renderIgStatus(); toast("로그아웃했어요"); });
+
 // ------------------------------------------------------------ 설정
 function renderSettings() {
+  renderIgStatus();
   $("#setHelper").value = state.settings.helper;
   $("#setModel").value = state.settings.model;
   $("#setLang").value = state.settings.language;

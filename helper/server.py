@@ -273,10 +273,15 @@ def ig_play_count(url, cookies_browser):
     pk = 0
     for c in m.group(1)[:11]:
         pk = pk * 64 + _IG_ALPH.index(c)
-    for browser in [b for b in [cookies_browser, "chrome"] if b]:
+    for browser in [b for b in ["__login__" if ig_logged_in() else "", cookies_browser, "chrome"] if b]:
         try:
             if browser not in _ig_cookie_cache:
-                jar = extract_cookies_from_browser(browser)
+                if browser == "__login__":
+                    import http.cookiejar
+                    jar = http.cookiejar.MozillaCookieJar(str(IG_COOKIES))
+                    jar.load(ignore_discard=True, ignore_expires=True)
+                else:
+                    jar = extract_cookies_from_browser(browser)
                 _ig_cookie_cache[browser] = "; ".join(f"{c.name}={c.value}" for c in jar if "instagram.com" in c.domain)
             ck = _ig_cookie_cache[browser]
             if "sessionid=" not in ck:
@@ -394,13 +399,176 @@ AUTO_BROWSERS = (["firefox", "edge", "whale", "chrome", "brave"] if os.name == "
 _good_browser = {"name": ""}
 
 
+# ---- 프로그램 전용 인스타 로그인 창
+# Windows 크롬·엣지는 저장된 로그인을 다른 프로그램이 못 읽게 잠가둠(앱 바운드 암호화) → 브라우저 로그인을 빌릴 수 없음.
+# 대신 이 프로그램 전용 브라우저 창(별도 프로필)을 띄워 거기서 인스타에 로그인하게 하고,
+# 창 안의 로그인 정보를 브라우저 개발자 연결(CDP)로 직접 받아 data/ig_cookies.txt 에 저장. 로그인 정보는 인스타 외에는 보내지 않음.
+IG_COOKIES = Path(__file__).resolve().parent.parent / "data" / "ig_cookies.txt"
+IG_PROFILE = Path(__file__).resolve().parent.parent / "data" / "ig_login_profile"
+IG_CDP_PORT = 9223
+IG_LOGIN = {"state": "idle", "proc": None}  # idle | waiting | done | error
+
+
+def ig_logged_in():
+    try:
+        return "\tsessionid\t" in IG_COOKIES.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def login_browser():
+    """로그인 창으로 쓸 브라우저 실행 파일 (Windows는 엣지가 항상 있음)."""
+    if os.name == "nt":
+        cands = [Path(os.environ.get(v, "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe" for v in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA")]
+        cands += [Path(os.environ.get(v, "")) / "Google" / "Chrome" / "Application" / "chrome.exe" for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+        cands += [Path(os.environ.get(v, "")) / "Naver" / "Naver Whale" / "Application" / "whale.exe" for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+    else:
+        cands = [Path(p) for p in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                                   "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                                   "/Applications/Whale.app/Contents/MacOS/Whale",
+                                   "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser")]
+    for c in cands:
+        if str(c) not in ("", ".") and c.is_file():
+            return str(c)
+    return None
+
+
+def _ws_call(ws_url, method, params=None):
+    """아주 작은 웹소켓 클라이언트: CDP 명령 하나 보내고 결과 받기 (표준 기능만 사용)."""
+    import base64
+    import socket
+    import struct
+    from urllib.parse import urlparse as _up
+    u = _up(ws_url)
+    sock = socket.create_connection((u.hostname, u.port), timeout=10)
+    try:
+        key = base64.b64encode(os.urandom(16)).decode()
+        sock.sendall((f"GET {u.path} HTTP/1.1\r\nHost: {u.hostname}:{u.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                      f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise RuntimeError("연결 끊김")
+            buf += chunk
+        head, rest = buf.split(b"\r\n\r\n", 1)
+        if b" 101 " not in head.split(b"\r\n")[0]:
+            raise RuntimeError("웹소켓 연결 실패")
+        payload = json.dumps({"id": 1, "method": method, "params": params or {}}).encode()
+        mask = os.urandom(4)
+        n = len(payload)
+        hdr = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
+        sock.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+        def read(k):
+            nonlocal rest
+            while len(rest) < k:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    raise RuntimeError("연결 끊김")
+                rest += chunk
+            out, rest = rest[:k], rest[k:]
+            return out
+
+        msg = b""
+        while True:
+            b1, b2 = read(2)
+            ln = b2 & 0x7F
+            if ln == 126:
+                ln = struct.unpack(">H", read(2))[0]
+            elif ln == 127:
+                ln = struct.unpack(">Q", read(8))[0]
+            data = read(ln)
+            op = b1 & 0x0F
+            if op in (0x1, 0x0):
+                msg += data
+                if b1 & 0x80:
+                    obj = json.loads(msg)
+                    if obj.get("id") == 1:
+                        return obj.get("result", {})
+                    msg = b""
+            elif op == 0x8:
+                raise RuntimeError("연결 닫힘")
+    finally:
+        sock.close()
+
+
+def _cdp_browser_ws():
+    import urllib.request
+    with urllib.request.urlopen(f"http://127.0.0.1:{IG_CDP_PORT}/json/version", timeout=3) as r:
+        return json.load(r)["webSocketDebuggerUrl"]
+
+
+def save_ig_cookies(cookies):
+    """CDP 쿠키 목록 → yt-dlp가 읽는 cookies.txt (Netscape 형식)."""
+    lines = ["# Netscape HTTP Cookie File"]
+    for c in cookies:
+        dom = c.get("domain", "")
+        if "instagram.com" not in dom:
+            continue
+        exp = int(c.get("expires") or 0)
+        lines.append("\t".join([dom, "TRUE" if dom.startswith(".") else "FALSE", c.get("path", "/"),
+                                 "TRUE" if c.get("secure") else "FALSE", str(max(exp, 0)), c["name"], c["value"]]))
+    IG_COOKIES.parent.mkdir(exist_ok=True)
+    IG_COOKIES.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _ig_cookie_cache.pop("__login__", None)
+
+
+def ig_login_watch():
+    """로그인 창이 열려 있는 동안 2초마다 확인 → 로그인되면 저장하고 창 닫기."""
+    import time as _t
+    deadline = _t.time() + 15 * 60
+    while _t.time() < deadline:
+        _t.sleep(2)
+        proc = IG_LOGIN["proc"]
+        try:
+            ws = _cdp_browser_ws()
+            cookies = _ws_call(ws, "Storage.getCookies").get("cookies", [])
+        except Exception:  # noqa: BLE001
+            if proc is not None and proc.poll() is not None:
+                break  # 사용자가 로그인 안 하고 창을 닫음
+            continue
+        if any(c.get("name") == "sessionid" and "instagram.com" in c.get("domain", "") and c.get("value") for c in cookies):
+            save_ig_cookies(cookies)
+            IG_LOGIN["state"] = "done"
+            print("[정보] 인스타 로그인 저장 완료")
+            _t.sleep(1.5)
+            try:
+                _ws_call(_cdp_browser_ws(), "Browser.close")
+            except Exception:  # noqa: BLE001
+                pass
+            return
+    IG_LOGIN["state"] = "done" if ig_logged_in() else "idle"
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+
+
+def start_ig_login():
+    exe = login_browser()
+    if not exe:
+        raise RuntimeError("로그인 창을 띄울 브라우저(엣지·크롬·웨일)를 찾지 못했어요.")
+    if IG_LOGIN["state"] == "waiting" and IG_LOGIN["proc"] is not None and IG_LOGIN["proc"].poll() is None:
+        return  # 이미 열려 있음
+    IG_PROFILE.mkdir(parents=True, exist_ok=True)
+    IG_LOGIN["proc"] = subprocess.Popen([
+        exe, f"--user-data-dir={IG_PROFILE}", f"--remote-debugging-port={IG_CDP_PORT}", "--remote-allow-origins=*",
+        "--no-first-run", "--no-default-browser-check", "--disable-sync", "--window-size=480,760",
+        "--app=https://www.instagram.com/accounts/login/",
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    IG_LOGIN["state"] = "waiting"
+    threading.Thread(target=ig_login_watch, daemon=True).start()
+
+
 def cookie_attempts(cookies_browser):
     """yt-dlp에 붙일 로그인 옵션 후보들. 설정한 브라우저(없으면 로그인 없이) → 지난번 성공한 브라우저 → 나머지."""
     order = [cookies_browser or ""]
     for b in [_good_browser["name"]] + AUTO_BROWSERS:
         if b and b not in order:
             order.append(b)
-    return [(b, ["--cookies-from-browser", b] if b else []) for b in order]
+    tries = [(b, ["--cookies-from-browser", b] if b else []) for b in order]
+    if ig_logged_in():  # 프로그램 전용 로그인 창으로 로그인해 뒀으면 그걸 가장 먼저
+        tries.insert(1 if not cookies_browser else 0, ("__login__", ["--cookies", str(IG_COOKIES)]))
+    return tries
 
 
 def run_with_login(cmd_head, url, ok, cookies_browser):
@@ -409,7 +577,7 @@ def run_with_login(cmd_head, url, ok, cookies_browser):
     for b, extra in cookie_attempts(cookies_browser):
         p = subprocess.run(cmd_head + extra + [url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, creationflags=NO_WINDOW)
         if p.returncode == 0 and ok(p):
-            if b:
+            if b and b != "__login__":
                 _good_browser["name"] = b
             return p, ""
         err = p.stderr or p.stdout or ""
@@ -887,6 +1055,8 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path.startswith("/api/webversion"):
             files = [WEB_DIR / n for n in ("index.html", "app.js", "style.css")]
             return self._json(200, {"version": str(int(max(f.stat().st_mtime for f in files if f.exists())))})
+        if self.path.startswith("/api/iglogin"):
+            return self._json(200, {"state": IG_LOGIN["state"], "loggedIn": ig_logged_in()})
         if self.path.startswith("/api/progress"):
             from urllib.parse import parse_qs
             q = parse_qs(urlparse(self.path).query)
@@ -951,6 +1121,15 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json(200, {"ok": True})
                 threading.Thread(target=lambda: (__import__("time").sleep(0.3), os._exit(0)), daemon=True).start()
                 return
+            if route == "/api/iglogin":  # 프로그램 전용 인스타 로그인 창 열기
+                start_ig_login()
+                return self._json(200, {"state": IG_LOGIN["state"]})
+            if route == "/api/iglogout":
+                IG_COOKIES.unlink(missing_ok=True)
+                shutil.rmtree(IG_PROFILE, ignore_errors=True)
+                _ig_cookie_cache.clear()
+                IG_LOGIN["state"] = "idle"
+                return self._json(200, {"ok": True})
             if route == "/api/export":
                 return self._json(200, {"path": export_state()})
             if route == "/api/open":

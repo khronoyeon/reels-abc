@@ -108,6 +108,35 @@ jobs:
           $back = Invoke-RestMethod http://127.0.0.1:8765/api/state
           if ($back.refs[0].title -ne '테스트') { throw "저장 실패" } else { "저장 OK" }
 
+      - name: 인스타 로그인 창 (엣지 전용 창 열기 → 로그인 정보 읽기 → 닫기)
+        shell: pwsh
+        run: |
+          $h = @{ Origin = 'http://127.0.0.1:8765' }
+          Invoke-RestMethod http://127.0.0.1:8765/api/iglogin -Method Post -Body '{}' -ContentType 'application/json' -Headers $h | Out-Null
+          $ok = $false
+          foreach ($i in 1..30) { Start-Sleep 2; try { $v = Invoke-RestMethod http://127.0.0.1:9223/json/version -TimeoutSec 3; $ok = $true; break } catch {} }
+          if (-not $ok) { throw "로그인 창(엣지)이 열리지 않음" }
+          "브라우저: $($v.Browser)"
+          Start-Sleep 6
+          $py = "$env:USERPROFILE\ReelsExtractor\.venv\Scripts\python.exe"
+          $code = "import sys; sys.path.insert(0, r'$env:USERPROFILE\ReelsExtractor\helper'); import server; ws = server._cdp_browser_ws(); ck = server._ws_call(ws, 'Storage.getCookies')['cookies']; names = sorted({c['name'] for c in ck if 'instagram' in c['domain']}); print('인스타 쿠키:', names); assert 'csrftoken' in names or 'mid' in names or 'ig_did' in names; server._ws_call(server._cdp_browser_ws(), 'Browser.close')"
+          & $py -X utf8 -c $code
+          if ($LASTEXITCODE) { throw "로그인 정보 읽기 실패" }
+          Start-Sleep 6
+          $st = Invoke-RestMethod http://127.0.0.1:8765/api/iglogin
+          "상태: $($st.state) / 로그인: $($st.loggedIn)"
+          if ($st.state -ne 'idle') { throw "창을 닫았는데 상태가 그대로" }
+
+      - name: 로그인 필요한 릴스 → 로그인 안내가 나오는지
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $body = @{ url = 'https://www.instagram.com/reels/Db2aB_rM2qa/'; model = 'auto' } | ConvertTo-Json
+          try { Invoke-RestMethod http://127.0.0.1:8765/api/transcribe -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ Origin = 'http://127.0.0.1:8765' } -TimeoutSec 900; "받아짐(로그인 없이)" }
+          catch { $m = $_.ErrorDetails.Message; "오류 메시지: $($m.Substring(0, [Math]::Min(200, $m.Length)))" }
+          "걸린 시간: $([int]$sw.Elapsed.TotalSeconds)초"
+
       - name: (참고) 실제 인스타 릴스 — 데이터센터라 막힐 수 있음
         continue-on-error: true
         shell: pwsh
