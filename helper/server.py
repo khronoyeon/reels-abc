@@ -297,11 +297,9 @@ def stats_with_views(info, url, cookies_browser):
 
 def fetch_meta(url, cookies_browser):
     cmd = yt_dlp_cmd() + ["--no-playlist", "--no-warnings", "--skip-download", "-j"]
-    if cookies_browser:
-        cmd += ["--cookies-from-browser", cookies_browser]
-    p = subprocess.run(cmd + [url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, creationflags=NO_WINDOW)
-    if p.returncode != 0:
-        raise RuntimeError("영상 정보를 가져오지 못했어요.\n" + (p.stderr or "")[-400:])
+    p, err = run_with_login(cmd, url, lambda _p: bool(_p.stdout.strip()), cookies_browser)
+    if p is None:
+        raise RuntimeError("영상 정보를 가져오지 못했어요." + login_hint(err) + "\n" + err[-400:])
     info = json.loads(p.stdout.strip().splitlines()[-1])
     return {"stats": stats_with_views(info, url, cookies_browser), "duration": info.get("duration")}
 
@@ -358,11 +356,9 @@ def ensure_video(url, cookies_browser):
                 "-f", "b[ext=mp4][height<=1080]/bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=720]+ba/b",
                 "--merge-output-format", "mp4", "-o", str(MEDIA_DIR / (name[:-4] + ".%(ext)s")),
             ]
-            if cookies_browser:
-                cmd += ["--cookies-from-browser", cookies_browser]
-            p = subprocess.run(cmd + [url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, creationflags=NO_WINDOW)
-            if p.returncode != 0 or not dst.exists():
-                raise RuntimeError("영상을 받지 못했어요." + login_hint(p.stderr or "") + "\n" + (p.stderr or "")[-400:])
+            p, err = run_with_login(cmd, url, lambda _p: dst.exists(), cookies_browser)
+            if p is None:
+                raise RuntimeError("영상을 받지 못했어요." + login_hint(err) + "\n" + err[-400:])
     info = {}
     if info_path.exists():
         try:
@@ -374,9 +370,45 @@ def ensure_video(url, cookies_browser):
 
 def login_hint(err):
     e = err.lower()
+    if "certain audiences" in e or "isn't available" in e or "private" in e:
+        return " (나이·지역 제한이나 비공개 릴스라서 인스타에 로그인해야 볼 수 있어요. 크롬 등 브라우저에서 인스타에 로그인한 뒤 다시 가져와 주세요.)"
     if "login" in e or "cookie" in e or "rate" in e:
-        return " (인스타 로그인이 필요해요. 설정에서 '로그인된 브라우저'를 골라주세요.)"
+        return " (인스타 로그인이 필요해요. 브라우저에서 인스타에 로그인한 뒤 다시 가져와 주세요.)"
     return ""
+
+
+# 로그인해야 보이는 릴스(나이·지역 제한, 비공개 계정 등): 컴퓨터에 깔린 브라우저의 인스타 로그인으로 자동 재시도
+AUTO_BROWSERS = (["firefox", "edge", "whale", "chrome", "brave"] if os.name == "nt"
+                 else ["chrome", "whale", "edge", "brave", "firefox"])
+_good_browser = {"name": ""}
+
+
+def cookie_attempts(cookies_browser):
+    """yt-dlp에 붙일 로그인 옵션 후보들. 설정한 브라우저(없으면 로그인 없이) → 지난번 성공한 브라우저 → 나머지."""
+    order = [cookies_browser or ""]
+    for b in [_good_browser["name"]] + AUTO_BROWSERS:
+        if b and b not in order:
+            order.append(b)
+    return [(b, ["--cookies-from-browser", b] if b else []) for b in order]
+
+
+def run_with_login(cmd_head, url, ok, cookies_browser):
+    """cmd_head + 로그인옵션 + url 실행. ok(p)가 참이면 성공. 실패하면 브라우저 로그인으로 차례로 재시도."""
+    first_err = ""
+    for b, extra in cookie_attempts(cookies_browser):
+        p = subprocess.run(cmd_head + extra + [url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, creationflags=NO_WINDOW)
+        if p.returncode == 0 and ok(p):
+            if b:
+                _good_browser["name"] = b
+            return p, ""
+        err = p.stderr or p.stdout or ""
+        if not first_err:
+            first_err = err
+            if "instagram.com" not in url and "facebook.com" not in url:
+                break  # 유튜브·틱톡 등은 로그인 재시도 안 함
+        if b == "" and "unsupported url" in err.lower():
+            break
+    return None, first_err
 
 
 # 3) 화면 맨 위 타이틀 자막 읽기
@@ -649,30 +681,18 @@ def download_audio(url, workdir, cookies_browser):
         "-x", "--audio-format", "wav", "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1",
         "--print-json", "-o", out,
     ]
-    attempts = [[]]
-    if cookies_browser:
-        attempts = [["--cookies-from-browser", cookies_browser]]
-    last_err = ""
-    for extra in attempts:
-        p = subprocess.run(base + extra + [url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, creationflags=NO_WINDOW)
-        if p.returncode == 0:
-            info = {}
-            for line in p.stdout.splitlines():
-                line = line.strip()
-                if line.startswith("{"):
-                    try:
-                        info = json.loads(line)
-                    except json.JSONDecodeError:
-                        pass
-            wavs = list(Path(workdir).glob("audio*.wav"))
-            if not wavs:
-                raise RuntimeError("오디오 파일을 찾지 못했습니다.")
-            return wavs[0], info
-        last_err = (p.stderr or p.stdout)[-800:]
-    hint = ""
-    if "login" in last_err.lower() or "cookie" in last_err.lower() or "rate" in last_err.lower():
-        hint = " (인스타 로그인이 필요합니다. 설정에서 '쿠키 가져올 브라우저'를 지정하세요.)"
-    raise RuntimeError(f"다운로드 실패{hint}\n{last_err}")
+    p, err = run_with_login(base, url, lambda _p: bool(list(Path(workdir).glob("audio*.wav"))), cookies_browser)
+    if p is None:
+        raise RuntimeError("영상을 받지 못했어요." + login_hint(err) + "\n" + err[-800:])
+    info = {}
+    for line in p.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                info = json.loads(line)
+            except json.JSONDecodeError:
+                pass
+    return list(Path(workdir).glob("audio*.wav"))[0], info
 
 
 # ---------------------------------------------------------------- Claude (선택)

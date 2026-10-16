@@ -250,8 +250,9 @@ async function addFromUrl(group, url, form) {
   } catch (err) {
     const m = err.message;
     const msg = m.includes("Failed to fetch") ? "추출기가 꺼져 있어요. 프로그램을 껐다 켜거나, 설정 탭의 설치 명령을 다시 실행해 주세요."
-      : /login|로그인|cookie/i.test(m) ? "인스타가 로그인을 요구해요. 설정 → '인스타가 막을 때: 로그인된 브라우저'를 골라주세요."
-      : /private|비공개|not available|unavailable/i.test(m) ? "비공개이거나 삭제된 영상이에요."
+      : /certain audiences|나이·지역/i.test(m) ? "나이·지역 제한이 걸린 릴스라 인스타 로그인이 있어야 볼 수 있어요. 크롬·웨일·엣지 중 하나에서 인스타에 로그인한 뒤 다시 [가져오기]를 눌러주세요."
+      : /login|로그인|cookie/i.test(m) ? "인스타가 로그인을 요구해요. 크롬·웨일·엣지 중 하나에서 인스타에 로그인한 뒤 다시 [가져오기]를 눌러주세요."
+      : /private|비공개|not available|unavailable/i.test(m) ? "비공개이거나 삭제된 영상이에요. (비공개 계정이면 그 계정을 팔로우한 인스타로 브라우저에 로그인해 두면 돼요)"
       : /Unsupported URL|올바른 링크/i.test(m) ? "릴스·쇼츠·틱톡 링크가 맞는지 확인해 주세요."
       : /timed out|timeout|Network|연결/i.test(m) ? "인터넷 연결이 불안정해요. 잠시 후 다시 시도해 주세요."
       : m.split("\n")[0];
