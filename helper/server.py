@@ -1246,6 +1246,10 @@ def main():
         print("[오류] whisper 엔진이 설치되지 않았습니다. 설치 명령을 다시 실행하세요.")
     port = int(os.environ.get("PORT", CONFIG["port"]))
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    try:  # 지우기·업데이트 때 이 프로세스만 정확히 끄도록 번호 기록
+        (HERE.parent / "helper.pid").write_text(str(os.getpid()))
+    except OSError:
+        pass
     threading.Thread(target=warm_up, daemon=True).start()
     print(f"✅ 릴스 A+B=C 헬퍼 실행 중: http://127.0.0.1:{port}")
     print(f"   전사 엔진: {ENGINE} / 모델: {CONFIG['model']} / AI: {'켜짐' if claude_client() else '꺼짐'}")
