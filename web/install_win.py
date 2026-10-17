@@ -108,6 +108,35 @@ def install_vc_runtime():
             pass
 
 
+def ram_gb():
+    class MS(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong), ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong), ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong), ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+    try:
+        m = MS(dwLength=ctypes.sizeof(MS))
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+        return m.ullTotalPhys / 2**30
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def explain_exit(rc):
+    """오류 메시지 없이 프로그램이 멈췄을 때 (Windows 종료 코드) 이유 설명."""
+    code = rc & 0xFFFFFFFF
+    if code in (2, 3, 4):
+        return  # prepare_model.py 가 이미 이유를 말함
+    known = {
+        0xC000001D: "이 컴퓨터 CPU가 받아쓰기 기능에 필요한 명령을 지원하지 않아요 (아주 오래된 CPU).",
+        0xC0000005: "받아쓰기 기능이 갑자기 멈췄어요. 보안 프로그램이 막았을 수 있어요 — 백신에서 이 설치를 허용하고 다시 실행해 주세요.",
+        0xC0000409: "받아쓰기 기능이 갑자기 멈췄어요. 보안 프로그램이 막았을 수 있어요 — 백신에서 이 설치를 허용하고 다시 실행해 주세요.",
+        0xC0000017: "컴퓨터 메모리(RAM)가 부족해요. 다른 프로그램을 모두 끄고 다시 실행해 주세요.",
+        1: "보안 프로그램이 설치 중인 프로그램을 강제로 껐을 수 있어요. 백신에서 이 설치를 허용하고 다시 실행해 주세요.",
+    }
+    ok("[문제] " + known.get(code, "설치 중인 프로그램이 갑자기 꺼졌어요. 보안 프로그램이 막았을 수 있어요."))
+    ok(f"(오류 코드: 0x{code:08X})")
+
+
 def find_edge():
     for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
         try:
@@ -176,8 +205,18 @@ def main():
         fail("설치한 부품을 불러오지 못했어요. (보안 프로그램이 막았을 수 있어요)")
 
     say("[4/6] 받아쓰기 기능 받는 중 (약 1.6GB · 인터넷 속도에 따라 몇 분)")
-    if subprocess.run([vpy, "-c", "import truststore; truststore.inject_into_ssl(); from faster_whisper import WhisperModel as W; W('large-v3-turbo', device='cpu', compute_type='int8')"]).returncode:
-        fail("받아쓰기 기능을 받지 못했어요. 인터넷 연결을 확인하고 다시 실행해 주세요.")
+    prep = str(DIR / "helper" / "prepare_model.py")
+    ram = ram_gb()
+    if ram and ram < 5:
+        ok(f"참고: 이 컴퓨터 메모리가 {ram:.0f}GB라 받아쓰기가 느리거나 안 될 수 있어요")
+    rc = subprocess.run([vpy, prep, "download"]).returncode
+    if rc:
+        explain_exit(rc)
+        fail("받아쓰기 기능을 받지 못했어요.")
+    rc = subprocess.run([vpy, prep, "load"]).returncode
+    if rc:
+        explain_exit(rc)
+        fail("받아쓰기 기능을 켜지 못했어요.")
     ok("타이틀 자막 읽기 기능 받는 중")
     r = subprocess.run([vpy, "-c", f"import sys; sys.path.insert(0, r'{DIR / 'helper'}'); import server; server.rapid_engine()"],
                        capture_output=True)

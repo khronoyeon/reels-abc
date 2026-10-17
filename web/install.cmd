@@ -1,9 +1,9 @@
 @echo off
-rem 릴스 A+B=C 설치 (Windows, PowerShell 없이)
-rem   Windows 키 + R 에 붙여넣기:
+rem Reels A+B=C installer for Windows (no PowerShell needed)
+rem   Paste into Win+R, Command Prompt or PowerShell:
 rem   cmd /k "cd /d %TEMP% && curl --ssl-revoke-best-effort -fsSL https://reels-abc.vercel.app/install.cmd -o reels-install.cmd && reels-install.cmd"
-rem PowerShell이 막힌 PC(회사·학교 보안 정책, 일부 백신)에서도 되도록
-rem Windows 기본 도구(cmd, curl)와 공식 Python만 씀. 나머지는 install_win.py 가 처리.
+rem Uses only built-in cmd + curl and the official Python; install_win.py does the rest (Korean messages there).
+rem Keep this file ASCII-only: cmd mis-reads multibyte (Korean) lines in batch files and can run broken fragments.
 chcp 65001 >nul
 setlocal EnableExtensions
 if "%REELS_BASE%"=="" set "REELS_BASE=https://reels-abc.vercel.app"
@@ -11,15 +11,15 @@ set "PYVER=3.12.10"
 
 echo.
 echo ==============================================
-echo    릴스 A+B=C 설치를 시작할게요
-echo    (5~15분 걸려요. 다 될 때까지 이 창을 닫지 마세요)
+echo    Reels A+B=C - installing (5-15 min)
+echo    Please keep this window open until it finishes.
 echo ==============================================
 
 call :findpy
 if defined PY goto havepy
 
 echo.
-echo [1/6] 기본 프로그램 준비 중 (자동으로 설치돼요)
+echo [1/6] Installing Python (automatic)...
 curl --ssl-revoke-best-effort -fsSL "https://www.python.org/ftp/python/%PYVER%/python-%PYVER%-amd64.exe" -o "%TEMP%\reels-python.exe"
 if errorlevel 1 goto fail_net
 "%TEMP%\reels-python.exe" /quiet InstallAllUsers=0 PrependPath=0 Include_launcher=0 Include_test=0 Include_doc=0 Shortcuts=0
@@ -44,15 +44,15 @@ exit /b 0
 
 :fail_net
 echo.
-echo [설치 실패] 파일을 받지 못했어요. 인터넷 연결을 확인하고 같은 방법으로 다시 실행해 주세요.
+echo [FAILED] Download failed. Check the internet connection and run the same command again.
 exit /b 1
 
 :fail_py
 echo.
-echo [설치 실패] 기본 프로그램을 설치하지 못했어요. 같은 방법으로 한 번 더 실행해 주세요.
+echo [FAILED] Python could not be installed. Please run the same command again.
 exit /b 1
 
 :fail_any
 echo.
-echo 같은 방법으로 한 번 더 실행해 보시고, 그래도 안 되면 이 창을 캡처해서 보내주세요.
+rem (install_win.py already printed the reason in Korean)
 exit /b 1
