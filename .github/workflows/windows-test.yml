@@ -50,6 +50,7 @@ jobs:
           python -m pip install -q certifi httpx
           python -c "import httpx; httpx.get('https://huggingface.co', proxy='http://127.0.0.1:8080')" 2>$null
           if ($LASTEXITCODE -eq 0) { throw "재현 실패: 검사 프록시인데 그냥 통과됨" } else { "재현 OK: 기본 인증서 목록으로는 접속 실패" }
+          exit 0
 
       - name: 사용자와 같은 방식으로 설치 (PowerShell 방식)
         if: matrix.installer == 'powershell'
