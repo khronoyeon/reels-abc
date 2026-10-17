@@ -1,8 +1,18 @@
 # 실제 Windows에서 설치 명령 → 추출기 → 받아쓰기 → 타이틀 자막 읽기까지 끝까지 시험
 name: windows-test
+# 무료 사용량 아끼기: Windows에 영향 있는 파일이 바뀔 때만 자동 실행 (화면 디자인만 고칠 땐 안 돎) + 필요하면 수동 실행
 on:
   push:
+    paths:
+      - 'helper/**'
+      - 'web/install.cmd'
+      - 'web/uninstall.cmd'
+      - 'web/install_win.py'
+      - '.github/workflows/windows-test.yml'
   workflow_dispatch:
+concurrency:  # 연달아 고치면 앞 테스트는 취소하고 마지막 것만
+  group: windows-test
+  cancel-in-progress: true
 
 jobs:
   install-and-run:
@@ -11,7 +21,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        installer: [cmd, powershell]
+        # 사이트에서 안내하는 건 cmd 방식뿐 (예전 PowerShell 방식은 수동 실행 때만 시험하려면 여기에 powershell 추가)
+        installer: [cmd]
     steps:
       - uses: actions/checkout@v4
 
