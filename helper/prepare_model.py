@@ -9,11 +9,19 @@ import warnings
 # 모델 파일은 허깅페이스의 새 전송 방식(Xet, 별도 네이티브 엔진)으로 오는데, 일부 Windows PC에서 이 엔진이
 # 오류 메시지 없이 꺼짐 → 일반 다운로드로 받음 (속도 비슷, 끊기면 이어받기 됨)
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+# 백신이 큰 파일을 검사하느라 잠시 붙잡고 있어도 기다리게 (기본 10초면 끊김)
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "180")
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "60")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # Windows 바로가기 경고 숨김 (동작엔 지장 없음)
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("HF_HUB_VERBOSITY", "error")  # "로그인 안 하고 받는 중" 같은 영어 경고 숨김
 warnings.filterwarnings("ignore")
+for _s in (sys.stdout, sys.stderr):  # 한글을 못 쓰는 창 설정에서도 안내 문구 때문에 멈추지 않게
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
 try:  # 백신·회사망 인증서가 있는 PC 대응
     import truststore
     truststore.inject_into_ssl()
@@ -63,7 +71,7 @@ def download(model):
             return
         except Exception as e:  # noqa: BLE001
             last = e
-            say(f"받기가 끊겼어요 — 이어서 다시 받을게요 ({attempt}/5)")
+            say(f"받기가 끊겼어요. 이어서 다시 받을게요 ({attempt}/5)")
             time.sleep(3 * attempt)
     say("[문제] " + why(last))
     say(f"(자세한 내용: {type(last).__name__}: {str(last)[:300]})")

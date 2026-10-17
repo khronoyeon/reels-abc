@@ -23,6 +23,8 @@ from urllib.parse import urlparse
 # 모델을 받아야 할 때 허깅페이스 Xet 엔진 대신 일반 다운로드 (prepare_model.py 참고)
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "180")
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "60")
 
 # 백신·회사망이 인터넷 접속을 검사하는 PC(자체 인증서 사용)에서도 되도록: 파이썬 기본 목록 대신 Windows/Mac이 믿는 인증서 사용
 try:
