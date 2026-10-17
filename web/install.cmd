@@ -1,7 +1,7 @@
 @echo off
 rem 릴스 A+B=C 설치 (Windows, PowerShell 없이)
 rem   Windows 키 + R 에 붙여넣기:
-rem   cmd /k "cd /d %TEMP% && curl -fsSL https://reels-abc.vercel.app/install.cmd -o reels-install.cmd && reels-install.cmd"
+rem   cmd /k "cd /d %TEMP% && curl --ssl-revoke-best-effort -fsSL https://reels-abc.vercel.app/install.cmd -o reels-install.cmd && reels-install.cmd"
 rem PowerShell이 막힌 PC(회사·학교 보안 정책, 일부 백신)에서도 되도록
 rem Windows 기본 도구(cmd, curl)와 공식 Python만 씀. 나머지는 install_win.py 가 처리.
 chcp 65001 >nul
@@ -20,7 +20,7 @@ if defined PY goto havepy
 
 echo.
 echo [1/6] 기본 프로그램 준비 중 (자동으로 설치돼요)
-curl -fsSL "https://www.python.org/ftp/python/%PYVER%/python-%PYVER%-amd64.exe" -o "%TEMP%\reels-python.exe"
+curl --ssl-revoke-best-effort -fsSL "https://www.python.org/ftp/python/%PYVER%/python-%PYVER%-amd64.exe" -o "%TEMP%\reels-python.exe"
 if errorlevel 1 goto fail_net
 "%TEMP%\reels-python.exe" /quiet InstallAllUsers=0 PrependPath=0 Include_launcher=0 Include_test=0 Include_doc=0 Shortcuts=0
 del "%TEMP%\reels-python.exe" >nul 2>&1
@@ -28,7 +28,7 @@ call :findpy
 if not defined PY goto fail_py
 
 :havepy
-curl -fsSL "%REELS_BASE%/install_win.py" -o "%TEMP%\reels-install.py"
+curl --ssl-revoke-best-effort -fsSL "%REELS_BASE%/install_win.py" -o "%TEMP%\reels-install.py"
 if errorlevel 1 goto fail_net
 "%PY%" -X utf8 "%TEMP%\reels-install.py"
 if errorlevel 1 goto fail_any

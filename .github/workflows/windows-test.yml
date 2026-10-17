@@ -69,7 +69,7 @@ jobs:
           REELS_BASE: http://127.0.0.1:8000
           REELS_NO_OPEN: '1'
         run: |
-          cmd /c "cd /d %TEMP% && curl -fsSL http://127.0.0.1:8000/install.cmd -o reels-install.cmd && reels-install.cmd"
+          cmd /c "cd /d %TEMP% && curl --ssl-revoke-best-effort -fsSL http://127.0.0.1:8000/install.cmd -o reels-install.cmd && reels-install.cmd"
           if ($LASTEXITCODE) { throw "install failed ($LASTEXITCODE)" }
 
       - name: 설치 결과 확인 (바로가기 · 자동 실행 · 추출기)
@@ -175,7 +175,7 @@ jobs:
         if: matrix.installer == 'cmd'
         shell: pwsh
         run: |
-          cmd /c "cd /d %TEMP% && curl -fsSL http://127.0.0.1:8000/uninstall.cmd -o reels-uninstall.cmd && reels-uninstall.cmd"
+          cmd /c "cd /d %TEMP% && curl --ssl-revoke-best-effort -fsSL http://127.0.0.1:8000/uninstall.cmd -o reels-uninstall.cmd && reels-uninstall.cmd"
           Start-Sleep 2
           if (Test-Path "$env:USERPROFILE\ReelsExtractor\helper") { throw "프로그램이 안 지워짐" }
           if (-not (Test-Path "$env:USERPROFILE\ReelsExtractor\data\state.json")) { throw "데이터가 지워짐" }

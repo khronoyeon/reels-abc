@@ -1036,11 +1036,11 @@ const SETUP = {
   },
   win: {
     // 실행 창(Win+R)·명령 프롬프트·PowerShell 어디에 붙여넣어도 되게: 안쪽에 따옴표 없이 cmd 한 줄로
-    cmd: `cmd /k "cd /d %TEMP% && curl -fsSL ${SITE}/install.cmd -o reels-install.cmd && reels-install.cmd"`,
+    cmd: `cmd /k "cd /d %TEMP% && curl --ssl-revoke-best-effort -fsSL ${SITE}/install.cmd -o reels-install.cmd && reels-install.cmd"`,
     open: `<b>키보드에서 <kbd>⊞ Windows</kbd> 키를 누른 채 <kbd>R</kbd></b><br><span class="muted">화면 왼쪽 아래에 작은 "실행" 창이 떠요 (PowerShell이나 명령 프롬프트에 붙여넣어도 돼요)</span>`,
     paste: `<b><kbd>Ctrl</kbd> + <kbd>V</kbd> 로 붙여넣고 <kbd>Enter</kbd></b><br><span class="muted">검은 창이 열리고 설치가 저절로 진행돼요 (5~15분). 필요한 건 전부 자동으로 깔려요.<br>"확인 창"이 뜨면 [예] · "설치 끝!"이 나오면 프로그램이 열려요</span>`,
     uninstallHelp: "Windows 키 + R → 붙여넣고 Enter 하면 프로그램이 지워져요. 만든 레퍼런스·대본은 남겨둬서, 다시 설치하면 그대로 나와요.",
-    uninstall: `cmd /k "cd /d %TEMP% && curl -fsSL ${SITE}/uninstall.cmd -o reels-uninstall.cmd && reels-uninstall.cmd"`,
+    uninstall: `cmd /k "cd /d %TEMP% && curl --ssl-revoke-best-effort -fsSL ${SITE}/uninstall.cmd -o reels-uninstall.cmd && reels-uninstall.cmd"`,
   },
 };
 function renderSetup() {
