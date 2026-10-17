@@ -172,11 +172,11 @@ def main():
     subprocess.run(pip + ["pip"])
     if subprocess.run(pip + ["-r", str(DIR / "helper" / "requirements.txt")]).returncode:
         fail("필요한 부품을 설치하지 못했어요.")
-    if subprocess.run([vpy, "-c", "import faster_whisper, yt_dlp, imageio_ffmpeg"]).returncode:
+    if subprocess.run([vpy, "-c", "import faster_whisper, yt_dlp, imageio_ffmpeg, truststore"]).returncode:
         fail("설치한 부품을 불러오지 못했어요. (보안 프로그램이 막았을 수 있어요)")
 
     say("[4/6] 받아쓰기 기능 받는 중 (약 1.6GB · 인터넷 속도에 따라 몇 분)")
-    if subprocess.run([vpy, "-c", "from faster_whisper import WhisperModel as W; W('large-v3-turbo', device='cpu', compute_type='int8')"]).returncode:
+    if subprocess.run([vpy, "-c", "import truststore; truststore.inject_into_ssl(); from faster_whisper import WhisperModel as W; W('large-v3-turbo', device='cpu', compute_type='int8')"]).returncode:
         fail("받아쓰기 기능을 받지 못했어요. 인터넷 연결을 확인하고 다시 실행해 주세요.")
     ok("타이틀 자막 읽기 기능 받는 중")
     r = subprocess.run([vpy, "-c", f"import sys; sys.path.insert(0, r'{DIR / 'helper'}'); import server; server.rapid_engine()"],

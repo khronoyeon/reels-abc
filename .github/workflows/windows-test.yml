@@ -35,6 +35,22 @@ jobs:
           for ($i = 0; $i -lt 30; $i++) { try { (Invoke-WebRequest http://127.0.0.1:8000/install.ps1 -UseBasicParsing).StatusCode; $ok = $true; break } catch { Start-Sleep 1 } }
           if (-not $ok) { throw "test file server did not start" }
 
+      - name: 백신·회사망처럼 인터넷 검사 프록시 켜기 (자체 인증서를 Windows에만 등록)
+        if: matrix.installer == 'cmd'
+        shell: pwsh
+        run: |
+          python -m pip install -q mitmproxy
+          Start-Process mitmdump -ArgumentList '--listen-port','8080','-q' -WindowStyle Hidden
+          foreach ($i in 1..30) { if (Test-Path "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.cer") { break }; Start-Sleep 1 }
+          certutil -addstore Root "$env:USERPROFILE\.mitmproxy\mitmproxy-ca-cert.cer"
+          "HTTPS_PROXY=http://127.0.0.1:8080" >> $env:GITHUB_ENV
+          "HTTP_PROXY=http://127.0.0.1:8080" >> $env:GITHUB_ENV
+          "NO_PROXY=127.0.0.1,localhost" >> $env:GITHUB_ENV
+          # 확인: 파이썬 기본 인증서 목록(certifi)으로는 실패해야 사용자 PC와 같은 상황
+          python -m pip install -q certifi httpx
+          python -c "import httpx; httpx.get('https://huggingface.co', proxy='http://127.0.0.1:8080')" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "재현 실패: 검사 프록시인데 그냥 통과됨" } else { "재현 OK: 기본 인증서 목록으로는 접속 실패" }
+
       - name: 사용자와 같은 방식으로 설치 (PowerShell 방식)
         if: matrix.installer == 'powershell'
         shell: powershell

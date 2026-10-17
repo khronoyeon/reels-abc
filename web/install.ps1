@@ -116,7 +116,7 @@ if ($LASTEXITCODE -ne 0) { Fail '설치한 프로그램을 불러오지 못했�
 
 # ---------------------------------------------------------------- 4) 받아쓰기 모델
 Say '[4/6] 받아쓰기 기능 받는 중 (약 1.6GB · 인터넷 속도에 따라 몇 분)'
-& $VPy -c "from faster_whisper import WhisperModel as W; W('large-v3-turbo', device='cpu', compute_type='int8')"
+& $VPy -c "import truststore; truststore.inject_into_ssl(); from faster_whisper import WhisperModel as W; W('large-v3-turbo', device='cpu', compute_type='int8')"
 if ($LASTEXITCODE -ne 0) { Fail '받아쓰기 모델을 받지 못했어요. 인터넷 연결을 확인하고 다시 실행해 주세요.' }
 
 Ok '타이틀 자막 읽기 기능 받는 중'

@@ -3,6 +3,8 @@ faster-whisper
 # 최신 PyAV(16+)는 faster-whisper가 쓰는 옵션(metadata_errors)을 없애서 받아쓰기가 실패함
 av<16
 imageio-ffmpeg
+# 백신·회사망 인증서가 있는 PC에서 모델·영상 받기 (컴퓨터가 믿는 인증서 사용)
+truststore
 pyobjc-framework-Vision; sys_platform == "darwin"
 pyobjc-framework-Quartz; sys_platform == "darwin"
 # Windows 타이틀 자막: 한국어 전용 글자 인식 모델

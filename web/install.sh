@@ -44,7 +44,7 @@ say "④ 받아쓰기 모델 내려받는 중 (약 3GB — 인터넷 속도에 �
 if [ "$(uname -m)" = "arm64" ]; then
   .venv/bin/python -c "from huggingface_hub import snapshot_download as d; d('mlx-community/whisper-large-v3-mlx')"
 else
-  .venv/bin/python -c "from faster_whisper import WhisperModel as W; W('large-v3', device='cpu', compute_type='int8')"
+  .venv/bin/python -c "import truststore; truststore.inject_into_ssl(); from faster_whisper import WhisperModel as W; W('large-v3', device='cpu', compute_type='int8')"
 fi
 
 # 5) 컴퓨터 켤 때 자동 실행 + 지금 바로 실행

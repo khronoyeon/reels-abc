@@ -5,3 +5,4 @@ pyobjc-framework-Vision
 pyobjc-framework-Quartz
 pywebview
 anthropic
+truststore

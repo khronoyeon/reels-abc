@@ -20,6 +20,13 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+# 백신·회사망이 인터넷 접속을 검사하는 PC(자체 인증서 사용)에서도 되도록: 파이썬 기본 목록 대신 Windows/Mac이 믿는 인증서 사용
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:  # noqa: BLE001
+    pass
+
 HERE = Path(__file__).resolve().parent
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Windows: 검은 창 안 띄움
 # Windows: 하위 프로그램(yt-dlp)이 한글을 cp949가 아닌 UTF-8로 내보내도록
@@ -241,7 +248,7 @@ def transcribe_audio(path, model, language):
 def yt_dlp_cmd():
     try:
         import yt_dlp  # noqa: F401
-        return [sys.executable, "-m", "yt_dlp"]
+        return [sys.executable, str(HERE / "ytdlp_run.py")]
     except ImportError:
         exe = shutil.which("yt-dlp")
         if exe:
