@@ -214,9 +214,15 @@ def main():
         explain_exit(rc)
         fail("받아쓰기 기능을 받지 못했어요.")
     rc = subprocess.run([vpy, prep, "load"]).returncode
-    if rc:
+    if rc:  # 예전에 받다 만 파일이 깨져 있을 수 있음 → 지우고 한 번 더
         explain_exit(rc)
-        fail("받아쓰기 기능을 켜지 못했어요.")
+        subprocess.run([vpy, prep, "reset"])
+        if subprocess.run([vpy, prep, "download"]).returncode:
+            fail("받아쓰기 기능을 받지 못했어요.")
+        rc = subprocess.run([vpy, prep, "load"]).returncode
+        if rc:
+            explain_exit(rc)
+            fail("받아쓰기 기능을 켜지 못했어요.")
     ok("타이틀 자막 읽기 기능 받는 중")
     r = subprocess.run([vpy, "-c", f"import sys; sys.path.insert(0, r'{DIR / 'helper'}'); import server; server.rapid_engine()"],
                        capture_output=True)

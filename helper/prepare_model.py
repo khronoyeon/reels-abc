@@ -6,6 +6,9 @@ import sys
 import time
 import warnings
 
+# 모델 파일은 허깅페이스의 새 전송 방식(Xet, 별도 네이티브 엔진)으로 오는데, 일부 Windows PC에서 이 엔진이
+# 오류 메시지 없이 꺼짐 → 일반 다운로드로 받음 (속도 비슷, 끊기면 이어받기 됨)
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # Windows 바로가기 경고 숨김 (동작엔 지장 없음)
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -78,7 +81,16 @@ def load(model):
         sys.exit(4)
 
 
+def reset(model):
+    """받다 만(깨졌을 수 있는) 모델 파일 지우기 → 새로 받기 전에."""
+    from huggingface_hub import constants
+    for repo in (REPOS[model], "dropbox-dash/faster-whisper-large-v3-turbo"):
+        d = os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"))
+        shutil.rmtree(d, ignore_errors=True)
+    say("받았던 파일을 지우고 새로 받을게요")
+
+
 if __name__ == "__main__":
     mode = sys.argv[1]
     name = sys.argv[2] if len(sys.argv) > 2 else "large-v3-turbo"
-    (download if mode == "download" else load)(name)
+    {"download": download, "load": load, "reset": reset}[mode](name)
