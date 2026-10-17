@@ -1,7 +1,7 @@
 @echo off
 rem 릴스 A+B=C 설치 (Windows, PowerShell 없이)
 rem   Windows 키 + R 에 붙여넣기:
-rem   cmd /k curl -fsSL https://reels-abc.vercel.app/install.cmd -o "%TEMP%\reels-install.cmd" && "%TEMP%\reels-install.cmd"
+rem   cmd /k "cd /d %TEMP% && curl -fsSL https://reels-abc.vercel.app/install.cmd -o reels-install.cmd && reels-install.cmd"
 rem PowerShell이 막힌 PC(회사·학교 보안 정책, 일부 백신)에서도 되도록
 rem Windows 기본 도구(cmd, curl)와 공식 Python만 씀. 나머지는 install_win.py 가 처리.
 chcp 65001 >nul

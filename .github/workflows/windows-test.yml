@@ -45,14 +45,15 @@ jobs:
           powershell -ExecutionPolicy Bypass -c "irm http://127.0.0.1:8000/install.ps1 | iex"
           if ($LASTEXITCODE -ne 0) { throw "install failed" }
 
-      - name: 사용자와 같은 방식으로 설치 (PowerShell 없이 cmd 방식)
+      - name: 사용자와 같은 방식으로 설치 (사이트의 명령을 Windows PowerShell 5.1에 붙여넣은 경우)
         if: matrix.installer == 'cmd'
-        shell: cmd
+        shell: powershell
         env:
           REELS_BASE: http://127.0.0.1:8000
           REELS_NO_OPEN: '1'
         run: |
-          curl -fsSL http://127.0.0.1:8000/install.cmd -o "%TEMP%\reels-install.cmd" && "%TEMP%\reels-install.cmd"
+          cmd /c "cd /d %TEMP% && curl -fsSL http://127.0.0.1:8000/install.cmd -o reels-install.cmd && reels-install.cmd"
+          if ($LASTEXITCODE) { throw "install failed ($LASTEXITCODE)" }
 
       - name: 설치 결과 확인 (바로가기 · 자동 실행 · 추출기)
         shell: pwsh
@@ -152,3 +153,14 @@ jobs:
         if: always()
         shell: pwsh
         run: Get-Content "$env:USERPROFILE\ReelsExtractor\helper\helper.log" -Tail 60 -ErrorAction SilentlyContinue
+
+      - name: 지우기 (데이터는 남는지)
+        if: matrix.installer == 'cmd'
+        shell: pwsh
+        run: |
+          cmd /c "cd /d %TEMP% && curl -fsSL http://127.0.0.1:8000/uninstall.cmd -o reels-uninstall.cmd && reels-uninstall.cmd"
+          Start-Sleep 2
+          if (Test-Path "$env:USERPROFILE\ReelsExtractor\helper") { throw "프로그램이 안 지워짐" }
+          if (-not (Test-Path "$env:USERPROFILE\ReelsExtractor\data\state.json")) { throw "데이터가 지워짐" }
+          if (Test-Path "$env:USERPROFILE\Desktop\릴스 A+B=C.url") { throw "바로가기 남음" }
+          "지우기 OK (데이터 남음)"
