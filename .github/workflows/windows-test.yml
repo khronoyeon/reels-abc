@@ -29,7 +29,7 @@ jobs:
           Copy-Item helper, web -Destination "$stage\pkg\reels-abc-helper" -Recurse
           Remove-Item "$stage\pkg\reels-abc-helper\helper\.env" -ErrorAction SilentlyContinue
           Compress-Archive -Path "$stage\pkg\reels-abc-helper" -DestinationPath "$stage\reels-abc-helper.zip"
-          Copy-Item web\install.ps1, web\install.cmd, web\install_win.py, tests\sample.mp4 -Destination $stage
+          Copy-Item web\install.ps1, web\install.cmd, web\uninstall.cmd, web\install_win.py, tests\sample.mp4 -Destination $stage
           Start-Process python -ArgumentList "`"$PWD\tests\serve.py`"", "`"$stage`"" -WindowStyle Hidden
           $ok = $false
           for ($i = 0; $i -lt 30; $i++) { try { (Invoke-WebRequest http://127.0.0.1:8000/install.ps1 -UseBasicParsing).StatusCode; $ok = $true; break } catch { Start-Sleep 1 } }
