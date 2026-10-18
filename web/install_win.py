@@ -17,6 +17,7 @@ BASE = os.environ.get("REELS_BASE", "https://reels-abc.vercel.app")
 HOME = Path(os.environ["USERPROFILE"])
 DIR = HOME / "ReelsExtractor"
 APP_URL = "http://127.0.0.1:8765"
+MODEL = "large-v3"  # 정확도 우선 (가벼운 turbo는 예전 버전에서 받았다면 아래에서 정리)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 os.environ["PYTHONUTF8"] = "1"  # 이 설치가 실행하는 파이썬들도 한글 출력 때문에 멈추지 않게
 
@@ -206,25 +207,26 @@ def main():
     if subprocess.run([vpy, "-c", "import faster_whisper, yt_dlp, imageio_ffmpeg, truststore"]).returncode:
         fail("설치한 부품을 불러오지 못했어요. (보안 프로그램이 막았을 수 있어요)")
 
-    say("[4/6] 받아쓰기 기능 받는 중 (약 1.6GB · 인터넷 속도에 따라 몇 분)")
+    say("[4/6] 받아쓰기 기능 받는 중 (약 3GB · 인터넷 속도에 따라 5~20분)")
     prep = str(DIR / "helper" / "prepare_model.py")
     ram = ram_gb()
     if ram and ram < 5:
         ok(f"참고: 이 컴퓨터 메모리가 {ram:.0f}GB라 받아쓰기가 느리거나 안 될 수 있어요")
-    rc = subprocess.run([vpy, prep, "download"]).returncode
+    rc = subprocess.run([vpy, prep, "download", MODEL]).returncode
     if rc:
         explain_exit(rc)
         fail("받아쓰기 기능을 받지 못했어요.")
-    rc = subprocess.run([vpy, prep, "load"]).returncode
+    rc = subprocess.run([vpy, prep, "load", MODEL]).returncode
     if rc:  # 예전에 받다 만 파일이 깨져 있을 수 있음 → 지우고 한 번 더
         explain_exit(rc)
-        subprocess.run([vpy, prep, "reset"])
-        if subprocess.run([vpy, prep, "download"]).returncode:
+        subprocess.run([vpy, prep, "reset", MODEL])
+        if subprocess.run([vpy, prep, "download", MODEL]).returncode:
             fail("받아쓰기 기능을 받지 못했어요.")
-        rc = subprocess.run([vpy, prep, "load"]).returncode
+        rc = subprocess.run([vpy, prep, "load", MODEL]).returncode
         if rc:
             explain_exit(rc)
             fail("받아쓰기 기능을 켜지 못했어요.")
+    subprocess.run([vpy, prep, "reset", "large-v3-turbo"], capture_output=True)  # 예전 가벼운 모델 지워서 1.6GB 확보
     ok("타이틀 자막 읽기 기능 받는 중")
     r = subprocess.run([vpy, "-c", f"import sys; sys.path.insert(0, r'{DIR / 'helper'}'); import server; server.rapid_engine()"],
                        capture_output=True)

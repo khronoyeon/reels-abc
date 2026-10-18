@@ -17,7 +17,7 @@ concurrency:  # 연달아 고치면 앞 테스트는 취소하고 마지막 것�
 jobs:
   install-and-run:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -89,7 +89,7 @@ jobs:
         if: matrix.installer == 'cmd'
         shell: pwsh
         run: |
-          $m = "$env:USERPROFILE\ReelsExtractor\models\large-v3-turbo\model.bin"
+          $m = "$env:USERPROFILE\ReelsExtractor\models\large-v3\model.bin"
           if (-not (Test-Path $m)) { throw "GitHub 사본 모델 없음" }
           "모델 크기: $((Get-Item $m).Length)"
 

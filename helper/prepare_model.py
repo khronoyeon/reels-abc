@@ -34,8 +34,12 @@ REPOS = {
 }
 FILES = ["config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.*"]
 # 허깅페이스가 막힌 네트워크(회사·학교망, 일부 백신)용 사본: 우리 GitHub 릴리스 (MIT 라이선스 모델)
-MIRROR = {"large-v3-turbo": "https://github.com/khronoyeon/reels-abc/releases/download/model-large-v3-turbo/"}
-MIRROR_FILES = ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json", "model.bin"]
+REL = "https://github.com/khronoyeon/reels-abc/releases/download/"
+MIRROR = {"large-v3-turbo": REL + "model-large-v3-turbo/", "large-v3": REL + "model-large-v3/"}
+SMALL_FILES = ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json"]
+# GitHub은 파일 하나에 2GB까지라 큰 모델(3.1GB)은 둘로 나눠 올려둠 → 받아서 이어 붙임
+MODEL_PARTS = {"large-v3-turbo": ["model.bin"], "large-v3": ["model.bin.partaa", "model.bin.partab"]}
+NEED_GB = {"large-v3-turbo": 3, "large-v3": 5}
 MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
 
 
@@ -63,8 +67,9 @@ def download(model):
     from huggingface_hub import snapshot_download
     home = os.path.expanduser("~")
     free = shutil.disk_usage(home).free / 1e9
-    if free < 3:
-        say(f"[문제] 저장 공간이 {free:.1f}GB 남았어요. 3GB 이상 필요해요.")
+    need = NEED_GB.get(model, 5)
+    if free < need:
+        say(f"[문제] 저장 공간이 {free:.1f}GB 남았어요. {need}GB 이상 필요해요.")
         sys.exit(2)
     if os.path.exists(os.path.join(MODELS_DIR, model, "model.bin")):
         say("이미 받아둔 파일이 있어요")
@@ -109,7 +114,17 @@ def mirror_download(model):
         for line in r.read().decode().splitlines():
             h, _, name = line.strip().partition("  ")
             sums[name.lstrip("*")] = h
-    for name in MIRROR_FILES:
+    def verify(path, name):
+        hsh = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 22), b""):
+                hsh.update(chunk)
+        if name in sums and hsh.hexdigest() != sums[name]:
+            os.remove(path)
+            raise RuntimeError(f"{name} 파일이 깨졌어요 (다시 받음)")
+
+    final_model = os.path.join(dst, "model.bin")
+    for name in SMALL_FILES + ([] if os.path.exists(final_model) else MODEL_PARTS[model]):
         final = os.path.join(dst, name)
         if os.path.exists(final):
             continue
@@ -120,6 +135,7 @@ def mirror_download(model):
             total = int(r.headers.get("Content-Length") or 0) + (have if r.status == 206 else 0)
             got = have if r.status == 206 else 0
             shown = -1
+            label = "모델 파일" + (f" {MODEL_PARTS[model].index(name) + 1}/{len(MODEL_PARTS[model])}" if len(MODEL_PARTS[model]) > 1 and name in MODEL_PARTS[model] else "")
             while True:
                 chunk = r.read(1 << 20)
                 if not chunk:
@@ -128,15 +144,21 @@ def mirror_download(model):
                 got += len(chunk)
                 if total > 50e6 and int(got * 10 / total) != shown:
                     shown = int(got * 10 / total)
-                    say(f"{name} {shown * 10}%")
-        hsh = hashlib.sha256()
-        with open(part, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 22), b""):
-                hsh.update(chunk)
-        if name in sums and hsh.hexdigest() != sums[name]:
-            os.remove(part)
-            raise RuntimeError(f"{name} 파일이 깨졌어요 (다시 받음)")
+                    say(f"{label} {shown * 10}%")
+        verify(part, name)
         os.replace(part, final)
+    parts = MODEL_PARTS[model]
+    if not os.path.exists(final_model):
+        if len(parts) > 1:  # 나눠 받은 조각 이어 붙이기
+            joined = final_model + ".part"
+            with open(joined, "wb") as out:
+                for p in parts:
+                    with open(os.path.join(dst, p), "rb") as f:
+                        shutil.copyfileobj(f, out, 1 << 22)
+            verify(joined, "model.bin")
+            os.replace(joined, final_model)
+            for p in parts:
+                os.remove(os.path.join(dst, p))
     say("받기 완료 (GitHub 사본)")
 
 
@@ -156,7 +178,7 @@ def load(model):
 def reset(model):
     """받다 만(깨졌을 수 있는) 모델 파일 지우기 → 새로 받기 전에."""
     from huggingface_hub import constants
-    for repo in (REPOS[model], "dropbox-dash/faster-whisper-large-v3-turbo"):
+    for repo in [REPOS[model]] + (["dropbox-dash/faster-whisper-large-v3-turbo"] if model == "large-v3-turbo" else []):
         d = os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"))
         shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(os.path.join(MODELS_DIR, model), ignore_errors=True)
@@ -165,5 +187,5 @@ def reset(model):
 
 if __name__ == "__main__":
     mode = sys.argv[1]
-    name = sys.argv[2] if len(sys.argv) > 2 else "large-v3-turbo"
+    name = sys.argv[2] if len(sys.argv) > 2 else "large-v3"
     {"download": download, "load": load, "reset": reset}[mode](name)

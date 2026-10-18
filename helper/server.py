@@ -175,7 +175,8 @@ def resolve_language(language, probs):
 
 def resolve_model(model):
     if model in ("", None, "auto"):
-        return "large-v3" if ENGINE == "mlx-whisper" else "large-v3-turbo"
+        # Windows도 정확도 우선 (가벼운 turbo보다 2~3배 느리지만 Mac 결과와 다른 글자 2.1% → 0.8%)
+        return "large-v3"
     return model
 
 
