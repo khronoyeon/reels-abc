@@ -419,3 +419,8 @@ button.sm { padding: 8px 14px; font-size: 13px; border-radius: 10px; }
 .ig-status { font-size: 14px; color: var(--muted); }
 .ig-status.ok { color: var(--cta); font-weight: 600; }
 .lbl .hint { font-weight: 400; color: var(--muted); }
+
+/* 되돌리기 버튼이 붙은 알림 */
+.toast-act { margin-left: 12px; background: none; border: none; color: #8fc1ff; font-weight: 700; font-size: inherit; padding: 0 2px; cursor: pointer; }
+.toast-act:hover { color: #fff; background: none; }
+.c-head #clearAll { font-size: 12.5px; padding: 2px 4px; }

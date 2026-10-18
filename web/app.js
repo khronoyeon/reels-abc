@@ -105,9 +105,16 @@ function openExternal(url) {
   if (isAppWindow()) api("/api/open", { url }).catch(() => {});
   else window.open(url, "_blank", "noopener");
 }
-function toast(msg, ms = 2400) {
+function toast(msg, ms = 2400, action) {
   const t = $("#toast");
   t.textContent = msg;
+  if (action) {  // 예: 되돌리기 버튼
+    const b = document.createElement("button");
+    b.className = "toast-act";
+    b.textContent = action.label;
+    b.onclick = () => { t.classList.add("hidden"); action.run(); };
+    t.append(b);
+  }
   t.classList.remove("hidden");
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.add("hidden"), ms);
@@ -398,6 +405,7 @@ colsEl.addEventListener("click", (e) => {
         run: () => { state.sortBy = k; save(); state.groups.forEach(renderColumn); },
       })),
       "-",
+      n && { label: `레퍼런스 ${g} 비우기 (${n}개)`, danger: true, run: () => clearRefs(g) },
       state.groups.length > 1 && { label: `레퍼런스 ${g} 열 삭제`, danger: true, run: async () => {
         if (n && !(await ask(`레퍼런스 ${g}에 있는 ${n}개도 함께 삭제돼요. 계속할까요?`, { ok: "삭제", danger: true }))) return;
         state.refs = state.refs.filter((r) => r.group !== g);
@@ -849,6 +857,7 @@ function renderC() {
   $("#toC").textContent = `내 대본 보기 (${items.length})`;
   $("#toC").classList.toggle("hidden", !items.length);
   $("#clearPicks").classList.toggle("hidden", !items.length);
+  $("#clearAll").classList.toggle("hidden", !state.refs.length);
   $("#cParts").innerHTML = items.length
     ? `<div class="picks-hint">고른 순서대로 들어가요 · <b>⠿</b>를 끌어서 순서 바꾸기</div><div class="plist">${items.map((x, i) => `
       <div class="pitem ${x.label} ${prevChips.has(`${x.r}:${x.u}`) ? "" : "new"}" draggable="true" data-r="${x.r}" data-u="${x.u}">
@@ -904,6 +913,25 @@ $("#cParts").addEventListener("dragend", () => {
   cDirty = false;
   save(); refreshSelection(); recombine();
 });
+// 넣어둔 레퍼런스(A·B·C…)를 한 번에 비우기 — 보관함에 저장한 대본은 그대로
+async function clearRefs(group) {
+  const targets = state.refs.filter((r) => !group || r.group === group);
+  if (!targets.length) return toast("지울 레퍼런스가 없어요");
+  const where = group ? `레퍼런스 ${group}` : state.groups.join("·");
+  if (!(await ask(`${where}에 넣은 레퍼런스 ${targets.length}개를 모두 지울까요?\n보관함에 저장한 대본은 그대로 남아요.`, { ok: "모두 지우기", danger: true }))) return;
+  const before = { refs: state.refs, picks: state.picks, cText: $("#cText").value, cTitle: $("#cTitle").value, cDirty };
+  state.refs = state.refs.filter((r) => group && r.group !== group);
+  cleanPicks();
+  if (!group) { state.picks = []; cDirty = false; $("#cText").value = ""; $("#cTitle").value = ""; }
+  save(); renderBoard(); recombine();
+  toast(`${targets.length}개를 지웠어요`, 10000, { label: "되돌리기", run: () => {
+    state.refs = before.refs; state.picks = before.picks; cDirty = before.cDirty;
+    save(); renderBoard(); recombine();
+    $("#cText").value = before.cText; $("#cTitle").value = before.cTitle;
+    toast("되돌렸어요");
+  } });
+}
+$("#clearAll").addEventListener("click", () => clearRefs(null));
 $("#clearPicks").addEventListener("click", async () => {
   if (!(await ask("고른 문장을 모두 지울까요?", { ok: "지우기", danger: true }))) return;
   state.picks = [];

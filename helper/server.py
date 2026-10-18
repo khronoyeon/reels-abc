@@ -226,16 +226,24 @@ def transcribe_audio(path, model, language):
         return segs, res.get("language", lang)
 
     if ENGINE == "faster-whisper":
-        from faster_whisper import WhisperModel
-
         t_wait = time.time()
         with _model_lock:
             fw = fw_model(model)
             print(f"[시간] 모델 대기·준비 {time.time() - t_wait:.1f}s")
-            # 언어 감지는 받아쓰기 안에서 한 번에 (따로 감지하면 가장 무거운 단계가 두 번 돌아 느려짐)
-            lang = None if language in ("", None, "auto", "ko") else language
+            # Mac과 같은 방식: 먼저 언어를 확인하고, 한국어면 한국어로 고정 + 숏폼 말투 힌트
+            # (힌트 없이 자동 감지로 받아쓰면 Mac 결과와 다른 글자가 2배 넘게 많았음 — 5.0% → 2.1%)
+            from faster_whisper import decode_audio
+            audio = decode_audio(str(path))
+            lang = language
+            if language in ("", None, "auto", "ko"):
+                try:
+                    _, _, all_probs = fw.detect_language(audio)
+                    lang = resolve_language(language, dict(all_probs))
+                except Exception as e:  # noqa: BLE001
+                    print(f"[경고] 언어 감지 실패, 설정값 사용: {e}")
+                    lang = None if language in ("", "auto") else language
             segments, info = fw.transcribe(
-                str(path),
+                audio,
                 language=lang,
                 initial_prompt=INITIAL_PROMPT_KO if lang == "ko" else None,
                 beam_size=5,
