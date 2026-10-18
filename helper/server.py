@@ -184,8 +184,11 @@ def fw_model(model):
     from faster_whisper import WhisperModel
     if model not in _fw_models:
         t = time.time()
+        # 허깅페이스가 막힌 PC는 설치 때 GitHub 사본을 models/ 에 받아둠 (prepare_model.py)
+        local = HERE.parent / "models" / model
+        src = str(local) if (local / "model.bin").exists() else model
         # 그래픽카드 드라이버 상태와 상관없이 항상 되도록 CPU로 (자동 선택 시 CUDA 라이브러리 없으면 오류)
-        _fw_models[model] = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
+        _fw_models[model] = WhisperModel(src, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
         print(f"[시간] 받아쓰기 모델 올리기 {time.time() - t:.1f}s ({model}, CPU {os.cpu_count()}개)")
     return _fw_models[model]
 

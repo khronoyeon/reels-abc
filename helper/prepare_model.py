@@ -33,6 +33,10 @@ REPOS = {
     "large-v3": "Systran/faster-whisper-large-v3",
 }
 FILES = ["config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.*"]
+# 허깅페이스가 막힌 네트워크(회사·학교망, 일부 백신)용 사본: 우리 GitHub 릴리스 (MIT 라이선스 모델)
+MIRROR = {"large-v3-turbo": "https://github.com/khronoyeon/reels-abc/releases/download/model-large-v3-turbo/"}
+MIRROR_FILES = ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json", "model.bin"]
+MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
 
 
 def say(msg):
@@ -62,8 +66,11 @@ def download(model):
     if free < 3:
         say(f"[문제] 저장 공간이 {free:.1f}GB 남았어요. 3GB 이상 필요해요.")
         sys.exit(2)
+    if os.path.exists(os.path.join(MODELS_DIR, model, "model.bin")):
+        say("이미 받아둔 파일이 있어요")
+        return
     last = None
-    for attempt in range(1, 6):
+    for attempt in range(1, 3):
         try:
             path = snapshot_download(REPOS[model], allow_patterns=FILES)
             size = sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path)) / 1e9
@@ -71,17 +78,74 @@ def download(model):
             return
         except Exception as e:  # noqa: BLE001
             last = e
-            say(f"받기가 끊겼어요. 이어서 다시 받을게요 ({attempt}/5)")
-            time.sleep(3 * attempt)
+            if attempt < 2:
+                say("받기가 끊겼어요. 한 번 더 해볼게요")
+                time.sleep(3)
+    if model in MIRROR:
+        say("기본 주소가 막혀 있어서 다른 주소(GitHub)에서 받을게요")
+        for attempt in range(1, 6):
+            try:
+                mirror_download(model)
+                return
+            except Exception as e:  # noqa: BLE001
+                last = e
+                say(f"받기가 끊겼어요. 이어서 다시 받을게요 ({attempt}/5)")
+                time.sleep(3 * attempt)
     say("[문제] " + why(last))
     say(f"(자세한 내용: {type(last).__name__}: {str(last)[:300]})")
     sys.exit(3)
 
 
+def mirror_download(model):
+    """GitHub 사본에서 받기 — 끊기면 받은 데부터 이어받고, 다 받으면 파일이 온전한지 확인."""
+    import hashlib
+    import urllib.request
+    base = MIRROR[model]
+    dst = os.path.join(MODELS_DIR, model)
+    os.makedirs(dst, exist_ok=True)
+    ua = {"User-Agent": "reels-abc-installer"}
+    sums = {}
+    with urllib.request.urlopen(urllib.request.Request(base + "SHA256SUMS", headers=ua), timeout=60) as r:
+        for line in r.read().decode().splitlines():
+            h, _, name = line.strip().partition("  ")
+            sums[name.lstrip("*")] = h
+    for name in MIRROR_FILES:
+        final = os.path.join(dst, name)
+        if os.path.exists(final):
+            continue
+        part = final + ".part"
+        have = os.path.getsize(part) if os.path.exists(part) else 0
+        req = urllib.request.Request(base + name, headers=dict(ua, **({"Range": f"bytes={have}-"} if have else {})))
+        with urllib.request.urlopen(req, timeout=180) as r, open(part, "ab" if have and r.status == 206 else "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0) + (have if r.status == 206 else 0)
+            got = have if r.status == 206 else 0
+            shown = -1
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total > 50e6 and int(got * 10 / total) != shown:
+                    shown = int(got * 10 / total)
+                    say(f"{name} {shown * 10}%")
+        hsh = hashlib.sha256()
+        with open(part, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 22), b""):
+                hsh.update(chunk)
+        if name in sums and hsh.hexdigest() != sums[name]:
+            os.remove(part)
+            raise RuntimeError(f"{name} 파일이 깨졌어요 (다시 받음)")
+        os.replace(part, final)
+    say("받기 완료 (GitHub 사본)")
+
+
 def load(model):
     try:
         from faster_whisper import WhisperModel
-        WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4, local_files_only=True)
+        local = os.path.join(MODELS_DIR, model)
+        src = local if os.path.exists(os.path.join(local, "model.bin")) else model
+        WhisperModel(src, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4, local_files_only=True)
         say("받아쓰기 기능 확인 완료")
     except Exception as e:  # noqa: BLE001
         say("[문제] " + why(e))
@@ -95,6 +159,7 @@ def reset(model):
     for repo in (REPOS[model], "dropbox-dash/faster-whisper-large-v3-turbo"):
         d = os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"))
         shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(os.path.join(MODELS_DIR, model), ignore_errors=True)
     say("받았던 파일을 지우고 새로 받을게요")
 
 

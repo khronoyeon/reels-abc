@@ -19,7 +19,7 @@ timeout /t 2 /nobreak >nul
 if exist "%RX%\.venv" rmdir /s /q "%RX%\.venv" >nul 2>&1
 set /a TRIES+=1
 if exist "%RX%\.venv" if %TRIES% LSS 8 goto stop
-for %%D in (helper web media) do if exist "%RX%\%%D" rmdir /s /q "%RX%\%%D" >nul 2>&1
+for %%D in (helper web media models) do if exist "%RX%\%%D" rmdir /s /q "%RX%\%%D" >nul 2>&1
 if exist "%RX%\data\ig_login_profile" rmdir /s /q "%RX%\data\ig_login_profile" >nul 2>&1
 del "%RX%\helper.pid" >nul 2>&1
 for %%F in ("%USERPROFILE%\Desktop" "%APPDATA%\Microsoft\Windows\Start Menu\Programs") do del /q "%%~F\*A+B=C.url" "%%~F\*A+B=C.lnk" >nul 2>&1

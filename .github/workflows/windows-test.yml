@@ -79,9 +79,19 @@ jobs:
         env:
           REELS_BASE: http://127.0.0.1:8000
           REELS_NO_OPEN: '1'
+          # 허깅페이스가 막힌 네트워크 재현 → GitHub 사본으로 받는지 확인
+          HF_ENDPOINT: https://127.0.0.1:9
         run: |
           cmd /c "cd /d %TEMP% && curl --ssl-revoke-best-effort -fsSL http://127.0.0.1:8000/install.cmd -o reels-install.cmd && reels-install.cmd"
           if ($LASTEXITCODE) { throw "install failed ($LASTEXITCODE)" }
+
+      - name: 받아쓰기 모델을 GitHub 사본에서 받았는지
+        if: matrix.installer == 'cmd'
+        shell: pwsh
+        run: |
+          $m = "$env:USERPROFILE\ReelsExtractor\models\large-v3-turbo\model.bin"
+          if (-not (Test-Path $m)) { throw "GitHub 사본 모델 없음" }
+          "모델 크기: $((Get-Item $m).Length)"
 
       - name: 설치 결과 확인 (바로가기 · 자동 실행 · 추출기)
         shell: pwsh

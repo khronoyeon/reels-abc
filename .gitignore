@@ -9,3 +9,4 @@ web/.env*
 web/.vercel/
 .vercel/
 web/reels-abc-helper.zip
+models/
