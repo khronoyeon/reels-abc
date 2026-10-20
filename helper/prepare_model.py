@@ -163,6 +163,8 @@ def mirror_download(model):
 
 
 def load(model):
+    if os.environ.get("REELS_TEST_FAIL_LOAD") == model:  # 자동 테스트용: 이 모델이 안 켜지는 PC 흉내
+        sys.exit(0xC0000005)
     try:
         from faster_whisper import WhisperModel
         local = os.path.join(MODELS_DIR, model)

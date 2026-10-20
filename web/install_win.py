@@ -17,7 +17,6 @@ BASE = os.environ.get("REELS_BASE", "https://reels-abc.vercel.app")
 HOME = Path(os.environ["USERPROFILE"])
 DIR = HOME / "ReelsExtractor"
 APP_URL = "http://127.0.0.1:8765"
-MODEL = "large-v3"  # 정확도 우선 (가벼운 turbo는 예전 버전에서 받았다면 아래에서 정리)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 os.environ["PYTHONUTF8"] = "1"  # 이 설치가 실행하는 파이썬들도 한글 출력 때문에 멈추지 않게
 
@@ -130,7 +129,7 @@ def explain_exit(rc):
         return  # prepare_model.py 가 이미 이유를 말함
     known = {
         0xC000001D: "이 컴퓨터 CPU가 받아쓰기 기능에 필요한 명령을 지원하지 않아요 (아주 오래된 CPU).",
-        0xC0000005: "받아쓰기 기능이 갑자기 멈췄어요. 보안 프로그램이 막았을 수 있어요 — 백신에서 이 설치를 허용하고 다시 실행해 주세요.",
+        0xC0000005: "받아쓰기 모델을 켜다가 멈췄어요. 이 컴퓨터 메모리(RAM)에 비해 모델이 크거나, 백신이 막았을 수 있어요.",
         0xC0000409: "받아쓰기 기능이 갑자기 멈췄어요. 보안 프로그램이 막았을 수 있어요 — 백신에서 이 설치를 허용하고 다시 실행해 주세요.",
         0xC0000017: "컴퓨터 메모리(RAM)가 부족해요. 다른 프로그램을 모두 끄고 다시 실행해 주세요.",
     }
@@ -138,6 +137,59 @@ def explain_exit(rc):
         return  # 파이썬 오류: 위에 오류 내용이 이미 찍혀 있음
     ok("[문제] " + known.get(code, "설치 중인 프로그램이 갑자기 꺼졌어요. 보안 프로그램이 막았을 수 있어요."))
     ok(f"(오류 코드: 0x{code:08X})")
+
+
+MODEL_CHAIN = ["large-v3", "large-v3-turbo"]  # 정확도 순. 큰 모델이 이 PC에서 안 돌면 다음 것으로
+CHOICE_FILE = DIR / "data" / "model_choice.json"  # 어떤 모델이 이 PC에서 됐는지 기억 (업데이트 때 3GB 다시 안 받게)
+
+
+def prepare_model(vpy, prep):
+    """모델을 받고 켜본다. 큰 모델이 이 PC에서 못 켜지면(메모리 부족·오래된 CPU) 가벼운 모델로 자동 전환."""
+    chain = list(MODEL_CHAIN)
+    try:
+        prev = json.loads(CHOICE_FILE.read_text(encoding="utf-8"))
+        if prev.get("model") in chain:  # 지난번에 이 PC에서 된 모델부터 (그 위 모델은 이미 안 되는 걸 확인함)
+            chain = chain[chain.index(prev["model"]):]
+            if prev.get("skipped"):
+                ok(f"지난번에 이 컴퓨터에서 더 정확한 모델이 안 돼서 {prev['model']} 모델을 써요")
+    except Exception:  # noqa: BLE001
+        pass
+    ram = ram_gb()
+    if ram and ram < 8 and chain[0] == "large-v3":
+        ok(f"이 컴퓨터 메모리가 {ram:.0f}GB라 가벼운 모델을 써요 (정확도는 조금 낮아요)")
+        chain = chain[1:]
+    skipped = []
+    for model in chain:
+        rc = subprocess.run([vpy, prep, "download", model]).returncode
+        if rc:
+            explain_exit(rc)
+            fail("받아쓰기 기능을 받지 못했어요.")
+        rc = subprocess.run([vpy, prep, "load", model]).returncode
+        if rc:  # 받다 만 파일이 깨져 있을 수 있음 → 지우고 한 번 더
+            explain_exit(rc)
+            subprocess.run([vpy, prep, "reset", model])
+            if subprocess.run([vpy, prep, "download", model]).returncode:
+                fail("받아쓰기 기능을 받지 못했어요.")
+            rc = subprocess.run([vpy, prep, "load", model]).returncode
+        if rc == 0:
+            for other in MODEL_CHAIN:  # 안 쓰는 모델은 지워서 공간 확보
+                if other != model:
+                    subprocess.run([vpy, prep, "reset", other], capture_output=True)
+            CHOICE_FILE.parent.mkdir(exist_ok=True)
+            CHOICE_FILE.write_text(json.dumps({"model": model, "skipped": skipped, "ram_gb": round(ram, 1)}), encoding="utf-8")
+            cfg_path = DIR / "helper" / "config.json"
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            cfg["auto_model"] = model  # 추출기의 '자동' 모델 = 이 PC에서 되는 모델
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            if skipped:
+                ok(f"이 컴퓨터에서는 {model} 모델로 받아써요 (가장 정확한 모델은 켜지지 않았어요)")
+            return model
+        explain_exit(rc)
+        skipped.append(model)
+        subprocess.run([vpy, prep, "reset", model], capture_output=True)
+        if model != chain[-1]:
+            ok("더 가벼운 받아쓰기 모델로 다시 해볼게요")
+    fail("이 컴퓨터에서는 받아쓰기 기능이 켜지지 않아요. (메모리 부족이거나 아주 오래된 CPU일 수 있어요. 이 창을 캡처해서 보내주세요)")
 
 
 def find_edge():
@@ -208,25 +260,7 @@ def main():
         fail("설치한 부품을 불러오지 못했어요. (보안 프로그램이 막았을 수 있어요)")
 
     say("[4/6] 받아쓰기 기능 받는 중 (약 3GB · 인터넷 속도에 따라 5~20분)")
-    prep = str(DIR / "helper" / "prepare_model.py")
-    ram = ram_gb()
-    if ram and ram < 5:
-        ok(f"참고: 이 컴퓨터 메모리가 {ram:.0f}GB라 받아쓰기가 느리거나 안 될 수 있어요")
-    rc = subprocess.run([vpy, prep, "download", MODEL]).returncode
-    if rc:
-        explain_exit(rc)
-        fail("받아쓰기 기능을 받지 못했어요.")
-    rc = subprocess.run([vpy, prep, "load", MODEL]).returncode
-    if rc:  # 예전에 받다 만 파일이 깨져 있을 수 있음 → 지우고 한 번 더
-        explain_exit(rc)
-        subprocess.run([vpy, prep, "reset", MODEL])
-        if subprocess.run([vpy, prep, "download", MODEL]).returncode:
-            fail("받아쓰기 기능을 받지 못했어요.")
-        rc = subprocess.run([vpy, prep, "load", MODEL]).returncode
-        if rc:
-            explain_exit(rc)
-            fail("받아쓰기 기능을 켜지 못했어요.")
-    subprocess.run([vpy, prep, "reset", "large-v3-turbo"], capture_output=True)  # 예전 가벼운 모델 지워서 1.6GB 확보
+    prepare_model(str(venv / "Scripts" / "python.exe"), str(DIR / "helper" / "prepare_model.py"))
     ok("타이틀 자막 읽기 기능 받는 중")
     r = subprocess.run([vpy, "-c", f"import sys; sys.path.insert(0, r'{DIR / 'helper'}'); import server; server.rapid_engine()"],
                        capture_output=True)

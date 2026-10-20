@@ -23,6 +23,8 @@ jobs:
       matrix:
         # 사이트에서 안내하는 건 cmd 방식뿐 (예전 PowerShell 방식은 수동 실행 때만 시험하려면 여기에 powershell 추가)
         installer: [cmd]
+        # normal: 큰 모델이 켜짐 / fallback: 큰 모델이 안 켜지는 PC 흉내 → 가벼운 모델로 자동 전환되는지
+        scenario: [normal, fallback]
     steps:
       - uses: actions/checkout@v4
 
@@ -81,6 +83,7 @@ jobs:
           REELS_NO_OPEN: '1'
           # 허깅페이스가 막힌 네트워크 재현 → GitHub 사본으로 받는지 확인
           HF_ENDPOINT: https://127.0.0.1:9
+          REELS_TEST_FAIL_LOAD: ${{ matrix.scenario == 'fallback' && 'large-v3' || '' }}
         run: |
           cmd /c "cd /d %TEMP% && curl --ssl-revoke-best-effort -fsSL http://127.0.0.1:8000/install.cmd -o reels-install.cmd && reels-install.cmd"
           if ($LASTEXITCODE) { throw "install failed ($LASTEXITCODE)" }
@@ -89,9 +92,15 @@ jobs:
         if: matrix.installer == 'cmd'
         shell: pwsh
         run: |
-          $m = "$env:USERPROFILE\ReelsExtractor\models\large-v3\model.bin"
-          if (-not (Test-Path $m)) { throw "GitHub 사본 모델 없음" }
-          "모델 크기: $((Get-Item $m).Length)"
+          $want = if ('${{ matrix.scenario }}' -eq 'fallback') { 'large-v3-turbo' } else { 'large-v3' }
+          $m = "$env:USERPROFILE\ReelsExtractor\models\$want\model.bin"
+          if (-not (Test-Path $m)) { throw "GitHub 사본 모델 없음 ($want)" }
+          "모델 크기: $((Get-Item $m).Length) ($want)"
+          $cfg = Get-Content "$env:USERPROFILE\ReelsExtractor\helper\config.json" -Raw | ConvertFrom-Json
+          if ($cfg.auto_model -ne $want) { throw "config auto_model=$($cfg.auto_model), 기대 $want" }
+          $choice = Get-Content "$env:USERPROFILE\ReelsExtractor\data\model_choice.json" -Raw
+          "기억한 선택: $choice"
+          if ('${{ matrix.scenario }}' -eq 'fallback' -and (Test-Path "$env:USERPROFILE\ReelsExtractor\models\large-v3")) { throw "안 쓰는 큰 모델이 남아 있음" }
 
       - name: 설치 결과 확인 (바로가기 · 자동 실행 · 추출기)
         shell: pwsh

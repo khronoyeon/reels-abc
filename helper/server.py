@@ -176,7 +176,8 @@ def resolve_language(language, probs):
 def resolve_model(model):
     if model in ("", None, "auto"):
         # Windows도 정확도 우선 (가벼운 turbo보다 2~3배 느리지만 Mac 결과와 다른 글자 2.1% → 0.8%)
-        return "large-v3"
+        # 단, 설치 때 큰 모델이 이 PC에서 안 켜졌으면 설치기가 config.json auto_model 에 가벼운 모델을 적어둠
+        return CONFIG.get("auto_model") or "large-v3"
     return model
 
 
