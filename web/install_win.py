@@ -122,6 +122,29 @@ def ram_gb():
         return 0
 
 
+def pc_info():
+    """실패 원인 파악용: CPU 이름 · 메모리 · AVX2 지원 여부 (받아쓰기 엔진이 CPU 명령어를 가림)."""
+    cpu = ""
+    try:
+        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        cpu = winreg.QueryValueEx(k, "ProcessorNameString")[0].strip()
+    except OSError:
+        pass
+    try:
+        avx2 = bool(ctypes.windll.kernel32.IsProcessorFeaturePresent(40))  # PF_AVX2_INSTRUCTIONS_AVAILABLE
+    except Exception:  # noqa: BLE001
+        avx2 = None
+    return f"CPU: {cpu or '?'} / 메모리 {ram_gb():.0f}GB / AVX2 {'지원' if avx2 else '미지원·확인불가' if avx2 is None else '미지원'} / Windows {platform_ver()}"
+
+
+def platform_ver():
+    try:
+        import platform
+        return platform.version()
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
 def explain_exit(rc):
     """오류 메시지 없이 프로그램이 멈췄을 때 (Windows 종료 코드) 이유 설명."""
     code = rc & 0xFFFFFFFF
@@ -176,7 +199,7 @@ def prepare_model(vpy, prep):
                 if other != model:
                     subprocess.run([vpy, prep, "reset", other], capture_output=True)
             CHOICE_FILE.parent.mkdir(exist_ok=True)
-            CHOICE_FILE.write_text(json.dumps({"model": model, "skipped": skipped, "ram_gb": round(ram, 1)}), encoding="utf-8")
+            CHOICE_FILE.write_text(json.dumps({"model": model, "skipped": skipped, "pc": pc_info()}, ensure_ascii=False), encoding="utf-8")
             cfg_path = DIR / "helper" / "config.json"
             cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
             cfg["auto_model"] = model  # 추출기의 '자동' 모델 = 이 PC에서 되는 모델
@@ -189,6 +212,7 @@ def prepare_model(vpy, prep):
         subprocess.run([vpy, prep, "reset", model], capture_output=True)
         if model != chain[-1]:
             ok("더 가벼운 받아쓰기 모델로 다시 해볼게요")
+    ok("이 컴퓨터 정보: " + pc_info())
     fail("이 컴퓨터에서는 받아쓰기 기능이 켜지지 않아요. (메모리 부족이거나 아주 오래된 CPU일 수 있어요. 이 창을 캡처해서 보내주세요)")
 
 
