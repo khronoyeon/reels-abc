@@ -762,7 +762,7 @@ board.addEventListener("dblclick", (e) => {
 });
 board.addEventListener("focusout", (e) => {
   const el = e.target;
-  if (el.contentEditable !== "true") return;
+  if (el.contentEditable !== "true" || el.closest(".pitem")) return;  // 오른쪽 목록 수정은 따로 처리
   el.contentEditable = "false";
   const ref = state.refs.find((r) => r.id === el.closest(".ref").dataset.id);
   const i = ref.units.findIndex((x) => x.id === el.closest(".unit").dataset.u);
@@ -822,7 +822,7 @@ function pickedItems() {
   return state.picks.map((p, clickNo) => {
     const info = unitInfo(p.r, p.u);
     return info && {
-      ...p, clickNo, group: info.ref.group, title: info.ref.title, label: info.u.label, text: info.u.text,
+      ...p, clickNo, group: info.ref.group, title: info.ref.title, label: info.u.label, text: p.text || info.u.text, edited: !!p.text, orig: info.u.text,
       sec: info.sec, stitle: info.stitle, block: `${p.r}:${info.u.label}:${info.sec}`,
     };
   }).filter(Boolean);
@@ -861,13 +861,14 @@ function renderC() {
   $("#clearPicks").classList.toggle("hidden", !items.length);
   $("#clearAll").classList.toggle("hidden", !state.refs.length);
   $("#cParts").innerHTML = items.length
-    ? `<div class="picks-hint">고른 순서대로 들어가요 · <b>⠿</b>를 끌어서 순서 바꾸기</div><div class="plist">${items.map((x, i) => `
-      <div class="pitem ${x.label} ${prevChips.has(`${x.r}:${x.u}`) ? "" : "new"}" draggable="true" data-r="${x.r}" data-u="${x.u}">
+    ? `<div class="picks-hint">고른 순서대로 들어가요 · <b>⠿</b> 끌어서 순서 바꾸기 · 문장 <b>더블클릭</b>해서 고치기</div><div class="plist">${items.map((x, i) => `
+      <div class="pitem ${x.label} ${prevChips.has(`${x.r}:${x.u}`) ? "" : "new"} ${x.edited ? "edited" : ""}" draggable="true" data-r="${x.r}" data-u="${x.u}">
         <span class="grip" title="끌어서 순서 바꾸기">⠿</span>
         <span class="pnum">${i + 1}</span>
         <b class="g" style="background:${gColor(x.group)}">${x.group}</b>
         <span class="plabel">${SECTION_KO[x.label]}</span>
-        <span class="ptext" title="${esc(x.text)}">${esc(x.text)}</span>
+        <span class="ptext" title="${esc(x.text)}${x.edited ? `\n(원문: ${esc(x.orig)})` : ""}">${esc(x.text)}</span>
+        ${x.edited ? `<button class="revert" data-act="revert" title="원문으로 되돌리기">원문</button>` : ""}
         <button class="x" data-act="unpick" title="빼기">✕</button>
       </div>`).join("")}</div>`
     : `<div class="c-empty"><div class="c-empty-icon">↖</div>레퍼런스에서 문장을 <b>클릭</b>하거나<br><b>드래그</b>해서 골라보세요</div>`;
@@ -881,9 +882,36 @@ function recombine() {
 }
 
 $("#cParts").addEventListener("click", (e) => {
-  if (e.target.dataset.act !== "unpick") return;
   const it = e.target.closest(".pitem");
-  togglePick(it.dataset.r, it.dataset.u);
+  if (!it) return;
+  if (e.target.dataset.act === "unpick") togglePick(it.dataset.r, it.dataset.u);
+  if (e.target.dataset.act === "revert") setPickText(it.dataset.r, it.dataset.u, "");
+});
+// 오른쪽 목록에서 문장 더블클릭 → 그 자리에서 고치기 (고친 내용은 이 대본의 그 문장에만 붙고, 왼쪽 원문은 그대로)
+function setPickText(r, u, text) {
+  const p = state.picks.find((x) => x.r === r && x.u === u);
+  if (!p) return;
+  const info = unitInfo(r, u);
+  if (!text || (info && text === info.u.text)) delete p.text;
+  else p.text = text;
+  save(); recombine();
+}
+$("#cParts").addEventListener("dblclick", (e) => {
+  const el = e.target.closest(".ptext");
+  if (!el) return;
+  e.preventDefault();
+  const it = el.closest(".pitem");
+  it.draggable = false;  // 고치는 동안은 끌리지 않게
+  el.contentEditable = "true";
+  el.focus();
+  document.getSelection()?.selectAllChildren(el);
+});
+$("#cParts").addEventListener("focusout", (e) => {
+  const el = e.target;
+  if (!el.classList?.contains("ptext") || el.contentEditable !== "true") return;
+  el.contentEditable = "false";
+  const it = el.closest(".pitem");
+  setPickText(it.dataset.r, it.dataset.u, el.textContent.trim());
 });
 
 // 오른쪽 목록에서 문장을 끌어서 순서 바꾸기
@@ -910,7 +938,8 @@ $("#cParts").addEventListener("dragover", (e) => {
 $("#cParts").addEventListener("dragend", () => {
   if (!dragItem) return;
   dragItem.classList.remove("dragging");
-  state.picks = [...$$("#cParts .pitem")].map((el) => ({ r: el.dataset.r, u: el.dataset.u }));
+  const byKey = new Map(state.picks.map((p) => [`${p.r}:${p.u}`, p]));
+  state.picks = [...$$("#cParts .pitem")].map((el) => byKey.get(`${el.dataset.r}:${el.dataset.u}`) || { r: el.dataset.r, u: el.dataset.u });
   dragItem = null;
   cDirty = false;
   save(); refreshSelection(); recombine();

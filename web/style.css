@@ -428,3 +428,10 @@ button.sm { padding: 8px 14px; font-size: 13px; border-radius: 10px; }
 /* 카드의 "로그인하면 조회수" 버튼 */
 .views-login { background: var(--accent-soft, #e8f3ff); border: none; color: var(--accent); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; cursor: pointer; }
 .views-login:hover { background: #d6e9ff; color: var(--accent); }
+
+/* 오른쪽 목록에서 문장 고치기 */
+.pitem .ptext[contenteditable="true"] { white-space: normal; overflow: visible; text-overflow: clip; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; background: #fff; cursor: text; padding: 2px 4px; }
+.pitem.edited .ptext { color: var(--ink); }
+.pitem.edited .ptext::before { content: "✎ "; color: var(--accent); font-size: 11px; }
+.pitem .revert { border: none; background: var(--accent-soft); color: var(--accent); font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 999px; flex-shrink: 0; }
+.pitem .revert:hover { background: #d6e9ff; color: var(--accent); }
