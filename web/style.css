@@ -424,3 +424,7 @@ button.sm { padding: 8px 14px; font-size: 13px; border-radius: 10px; }
 .toast-act { margin-left: 12px; background: none; border: none; color: #8fc1ff; font-weight: 700; font-size: inherit; padding: 0 2px; cursor: pointer; }
 .toast-act:hover { color: #fff; background: none; }
 .c-head #clearAll { font-size: 12.5px; padding: 2px 4px; }
+
+/* 카드의 "로그인하면 조회수" 버튼 */
+.views-login { background: var(--accent-soft, #e8f3ff); border: none; color: var(--accent); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; cursor: pointer; }
+.views-login:hover { background: #d6e9ff; color: var(--accent); }

@@ -24,6 +24,8 @@ function statsHtml(st) {
   if (!st) return "";
   const parts = [];
   if (st.views != null) parts.push(`<span title="조회수">▶ ${fmtNum(st.views)}</span>`);
+  else if (st.views_reason === "login" || st.views_reason === "expired")  // 인스타는 로그인해야 조회수를 줌 (Windows는 프로그램 전용 로그인 창)
+    parts.push(`<button class="views-login" data-act="iglogin" title="인스타 조회수는 로그인해야 보여요. 한 번만 로그인하면 돼요">▶ ${st.views_reason === "expired" ? "다시 로그인" : "로그인하면 조회수"}</button>`);
   if (st.likes != null) parts.push(`<span title="좋아요">♥ ${fmtNum(st.likes)}</span>`);
   if (st.comments != null) parts.push(`<span title="댓글">💬 ${fmtNum(st.comments)}</span>`);
   return parts.length ? `<span class="stats">${parts.join("")}</span>` : "";
@@ -673,7 +675,7 @@ const board = $(".workspace");
 board.addEventListener("click", (e) => {
   if (e.target.closest("[contenteditable=true]")) return;
   const igl = e.target.closest("[data-act=iglogin]");
-  if (igl) { igLogin(igl.dataset.group); return; }
+  if (igl) { e.stopPropagation(); igLogin(igl.dataset.group || null); return; }
   const dismiss = e.target.closest("[data-act=dismiss]");
   if (dismiss) { loading[dismiss.dataset.group] = null; renderColumn(dismiss.dataset.group); return; }
   const card = e.target.closest(".ref");
@@ -1020,12 +1022,24 @@ async function igLogin(group) {
       igPolling = false;
       renderIgStatus();
       if (retryUrl) { toast("로그인 완료! 다시 가져올게요"); loading[group] = null; enqueue(group, [retryUrl]); }
-      else toast("인스타 로그인 완료!");
+      else toast("인스타 로그인 완료! 조회수를 채울게요");
+      refreshViews();
       return;
     }
     if (st.state === "idle") break; // 로그인 안 하고 창을 닫음
   }
   igPolling = false;
+}
+// 로그인 뒤: 조회수가 비어 있던 인스타 레퍼런스의 조회수 채우기
+async function refreshViews() {
+  for (const ref of state.refs) {
+    if (!ref.url || !/instagram\.com/.test(ref.url) || ref.stats?.views != null) continue;
+    try {
+      const r = await api("/api/meta", { url: ref.url, cookies_from_browser: state.settings.cookies });
+      ref.stats = r.stats;
+      save(); renderColumn(ref.group);
+    } catch {}
+  }
 }
 async function renderIgStatus() {
   const el = $("#igStatus");

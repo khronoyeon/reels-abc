@@ -293,12 +293,14 @@ def ig_play_count(url, cookies_browser):
     """인스타는 로그인해야 재생수를 알려줌 → 이 컴퓨터 브라우저의 인스타 로그인으로 조회 (인스타에만 전송)."""
     m = re.search(r"instagram\.com/(?:[^/]+/)?(?:reels?|p|tv)/([A-Za-z0-9_-]+)", url)
     if not m:
-        return None
+        return None, ""
+    import urllib.error
     import urllib.request
     from yt_dlp.cookies import extract_cookies_from_browser
     pk = 0
     for c in m.group(1)[:11]:
         pk = pk * 64 + _IG_ALPH.index(c)
+    tried_login = False  # 인스타 로그인 정보를 하나라도 써봤는지 (없으면 화면에 '로그인 필요' 표시)
     for browser in [b for b in ["__login__" if ig_logged_in() else "", cookies_browser, "chrome"] if b]:
         try:
             if browser not in _ig_cookie_cache:
@@ -308,32 +310,49 @@ def ig_play_count(url, cookies_browser):
                     jar.load(ignore_discard=True, ignore_expires=True)
                 else:
                     jar = extract_cookies_from_browser(browser)
-                _ig_cookie_cache[browser] = "; ".join(f"{c.name}={c.value}" for c in jar if "instagram.com" in c.domain)
-            ck = _ig_cookie_cache[browser]
-            if "sessionid=" not in ck:
+                _ig_cookie_cache[browser] = {c.name: c.value for c in jar if "instagram.com" in c.domain}
+            cookies = _ig_cookie_cache[browser]
+            if not cookies.get("sessionid"):
                 continue
+            tried_login = True
+            # 로그인 창은 Windows 엣지라서 그에 맞는 브라우저 정보로 (다른 기기 모양새면 인스타가 거부할 수 있음)
+            ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36 Edg/154.0.0.0"
+                  if os.name == "nt" else "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36")
             req = urllib.request.Request(f"https://i.instagram.com/api/v1/media/{pk}/info/", headers={
-                "Cookie": ck, "X-IG-App-ID": "936619743392459",
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+                "Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items()),
+                "X-IG-App-ID": "936619743392459", "X-CSRFToken": cookies.get("csrftoken", ""),
+                "X-Requested-With": "XMLHttpRequest", "Referer": "https://www.instagram.com/",
+                "Origin": "https://www.instagram.com", "Accept": "*/*", "User-Agent": ua,
             })
             for attempt in range(2):
                 try:
                     item = json.load(urllib.request.urlopen(req, timeout=20))["items"][0]
-                    return item.get("play_count") or item.get("ig_play_count") or item.get("view_count")
+                    return item.get("play_count") or item.get("ig_play_count") or item.get("view_count"), ""
+                except urllib.error.HTTPError as e:
+                    body = e.read(300).decode("utf-8", "replace")
+                    if e.code in (401, 403) or "login_required" in body or "checkpoint" in body:
+                        print(f"[정보] 인스타 조회수: 로그인이 만료됐거나 거부됨({browser}) {e.code} {body[:120]}")
+                        if browser == "__login__":
+                            IG_LOGIN["expired"] = True
+                        raise
+                    if attempt:
+                        raise
+                    time.sleep(1.5)
                 except Exception:  # noqa: BLE001
                     if attempt:
                         raise
-                    import time
                     time.sleep(1.5)
         except Exception as e:  # noqa: BLE001
-            print(f"[정보] 인스타 조회수 가져오기 실패({browser}): {e}")
-    return None
+            print(f"[정보] 인스타 조회수 가져오기 실패({browser}): {type(e).__name__}: {str(e)[:160]}")
+    return None, ("expired" if IG_LOGIN.get("expired") else "error") if tried_login else "login"
 
 
 def stats_with_views(info, url, cookies_browser):
     st = video_stats(info)
     if st["views"] is None and "instagram.com" in url:
-        st["views"] = ig_play_count(url, cookies_browser)
+        st["views"], reason = ig_play_count(url, cookies_browser)
+        if st["views"] is None and reason:
+            st["views_reason"] = reason  # login: 인스타 로그인 안 함 / expired: 다시 로그인 필요 / error: 일시 오류
     return st
 
 
@@ -432,7 +451,7 @@ _good_browser = {"name": ""}
 IG_COOKIES = Path(__file__).resolve().parent.parent / "data" / "ig_cookies.txt"
 IG_PROFILE = Path(__file__).resolve().parent.parent / "data" / "ig_login_profile"
 IG_CDP_PORT = 9223
-IG_LOGIN = {"state": "idle", "proc": None}  # idle | waiting | done | error
+IG_LOGIN = {"state": "idle", "proc": None, "expired": False}  # idle | waiting | done | error
 
 
 def ig_logged_in():
@@ -557,6 +576,7 @@ def ig_login_watch():
         if any(c.get("name") == "sessionid" and "instagram.com" in c.get("domain", "") and c.get("value") for c in cookies):
             save_ig_cookies(cookies)
             IG_LOGIN["state"] = "done"
+            IG_LOGIN["expired"] = False
             print("[정보] 인스타 로그인 저장 완료")
             _t.sleep(1.5)
             try:
