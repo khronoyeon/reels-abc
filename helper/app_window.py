@@ -120,5 +120,32 @@ def main():
     webview.start(private_mode=False, storage_path=str(data_dir), user_agent=None)
 
 
+LOG = HERE.parent / "app.log"
+
+
+def fallback(err):
+    """창을 못 띄우면 조용히 죽지 말고: 기록 남기고 → 브라우저로라도 열고 → 무슨 일인지 알려줌."""
+    import traceback
+    import webbrowser
+    try:
+        LOG.write_text(f"{time.strftime('%Y-%m-%d %H:%M:%S')} 프로그램 창 실패\n{traceback.format_exc()}\n", encoding="utf-8")
+    except OSError:
+        pass
+    if __import__("os").environ.get("REELS_FALLBACK_TEST"):
+        print("fallback:", type(err).__name__, err)
+        return
+    ok = ensure_helper()
+    if ok:
+        webbrowser.open(URL)
+    msg = ("프로그램 창을 띄우지 못해서 브라우저로 열었어요. 설치 명령을 한 번 더 실행하면 고쳐져요."
+           if ok else "추출기가 켜지지 않았어요. 설치 명령을 한 번 더 실행해 주세요.")
+    detail = f"{type(err).__name__}: {str(err)[:200]}"
+    subprocess.run(["osascript", "-e", f'display dialog "{msg}\n\n({detail})" with title "{APP_NAME}" buttons {{"확인"}} default button 1 giving up after 60'],
+                   capture_output=True)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:  # noqa: BLE001
+        fallback(e)

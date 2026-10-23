@@ -107,7 +107,12 @@ if [ -z "$REELS_NO_AUTOSTART" ]; then
 EOF
   cat > "$APP/Contents/MacOS/launcher" <<EOF
 #!/bin/bash
-exec "$DIR/.venv/bin/python" "$DIR/helper/app_window.py"
+# 파이썬이 없거나(설치가 깨짐) 창 프로그램이 바로 죽으면 조용히 끝내지 않고 알려줌
+if [ -x "$DIR/.venv/bin/python" ]; then
+  "$DIR/.venv/bin/python" "$DIR/helper/app_window.py" 2>>"$DIR/app.log" && exit 0
+fi
+osascript -e 'display dialog "릴스 A+B=C를 열지 못했어요. 사이트(reels-abc.vercel.app)에서 설치 명령을 한 번 더 실행해 주세요." with title "릴스 A+B=C" buttons {"사이트 열기", "닫기"} default button 1 giving up after 60' 2>/dev/null | grep -q "사이트 열기" && open "https://reels-abc.vercel.app/?stay"
+exit 1
 EOF
   chmod +x "$APP/Contents/MacOS/launcher"
   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true

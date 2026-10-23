@@ -7,6 +7,8 @@ imageio-ffmpeg
 truststore
 pyobjc-framework-Vision; sys_platform == "darwin"
 pyobjc-framework-Quartz; sys_platform == "darwin"
+# Mac 프로그램 창 (Intel Mac도 이 파일을 쓰므로 여기에도)
+pywebview; sys_platform == "darwin"
 # Windows 타이틀 자막: 한국어 전용 글자 인식 모델
 rapidocr; sys_platform == "win32"
 onnxruntime; sys_platform == "win32"
