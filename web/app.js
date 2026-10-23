@@ -1238,9 +1238,15 @@ function openApp(auto) {
   setTimeout(() => {
     window.removeEventListener("blur", onBlur);
     st.classList.toggle("ok", left);
+    const mac = setupOS === "mac";
     st.innerHTML = left
       ? "✅ 프로그램을 열었어요. 이 창은 닫아도 돼요."
-      : auto ? "" : "프로그램이 열리지 않았어요. 아래에서 설치해 주세요.";
+      : auto ? "" : `<div><b>프로그램이 열리지 않았어요.</b> 아래 순서로 확인해 주세요.
+        <ol class="open-help">
+          <li>화면 위쪽에 <b>"열까요?"</b> 확인 창이 떠 있으면 <b>[열기]</b>(또는 [허용])를 누르세요.</li>
+          <li>설치를 했다면 ${mac ? "<b>바탕화면의 '릴스 A+B=C' 아이콘</b>이나 <b>Launchpad</b>" : "<b>바탕화면의 '릴스 A+B=C' 아이콘</b>이나 <b>시작 메뉴</b>"}에서 직접 열어도 돼요.</li>
+          <li>아이콘이 없거나 그래도 안 열리면 <b>아직 설치가 안 된 거예요</b> → 아래 '프로그램 설치'를 따라 해주세요. (예전 데이터는 그대로 남아요)</li>
+        </ol></div>`;
     if (!left && auto) st.classList.add("hidden");
   }, 2500);
 }
